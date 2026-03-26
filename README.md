@@ -1,4 +1,4 @@
-# Parallel Image Inpainting
+## 15-618 Final Project
 
 Saileshwar Karthik, Ayushi Bansal
 

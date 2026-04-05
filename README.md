@@ -1,13 +1,25 @@
-## 15-618 Final Project
+# Parallel Inpainting
 
-Saileshwar Karthik, Ayushi Bansal
+15-618 Final Project by Saileshwar Karthik, Ayushi Bansal
 
-### [Project Proposal](https://docs.google.com/document/d/1SHlWeMfte05F6BTFgUYZfZQIznU-Wa7wOZKUN57yIpk/edit?usp=sharing)
+## Setup
 
-### Schedule
+1. Install OpenCV:
+   - **macOS:** `brew install opencv`
+   - **Linux:** `sudo apt install libopencv-dev`
 
-- [ ] Week of March 26: Checkpoint 1 - Project Setup and Literature Survey
-- [ ] Week of April 2:  Checkpoint 2 - Sequential Implementation
-- [ ] Week of April 9:  Checkpoint 3 - Project Milestone
-- [ ] Week of April 16: Checkpoint 4 - Parallelization with OpenMP
-- [ ] Week of April 22: Checkpoint 5 - Final Report Preparation
+2. Build:
+   ```bash
+   mkdir build
+   cd build && cmake .. && make
+   ```
+
+3. Run:
+   ```bash
+   ./inpaint
+   ```
+
+## References
+
+https://github.com/younesse-cv/PatchMatch
+https://github.com/vacancy/PyPatchMatch

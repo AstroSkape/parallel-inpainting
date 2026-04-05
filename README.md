@@ -1,25 +1,15 @@
-# Parallel Inpainting
+## 15-618 Final Project
 
-15-618 Final Project by Saileshwar Karthik, Ayushi Bansal
+Saileshwar Karthik, Ayushi Bansal
 
-## Setup
+### [Project Proposal](https://docs.google.com/document/d/1SHlWeMfte05F6BTFgUYZfZQIznU-Wa7wOZKUN57yIpk/edit?usp=sharing)
 
-1. Install OpenCV:
-   - **macOS:** `brew install opencv`
-   - **Linux:** `sudo apt install libopencv-dev`
+### Schedule
 
-2. Build:
-   ```bash
-   mkdir build
-   cd build && cmake .. && make
-   ```
-
-3. Run:
-   ```bash
-   ./inpaint
-   ```
-
-## References
-
-https://github.com/younesse-cv/PatchMatch
-https://github.com/vacancy/PyPatchMatch
+| Status | Deadline | Checkpoint |
+|--------|------|------------|
+| In Progress | April 1 | Project Setup and Literature Survey |
+|  | April 8  | Sequential Implementation |
+|  | April 15  | Project Milestone |
+|  | April 21 | Parallelization with OpenMP |
+|  | April 30 | Final Report Preparation |

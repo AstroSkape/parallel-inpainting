@@ -115,6 +115,7 @@ cv::Mat Inpainting::run(bool verbose, bool verbose_visualize, unsigned int rando
 // Returns a double sized target image (unless level = 0).
 MaskedImage Inpainting::_expectation_maximization(MaskedImage source, MaskedImage target, int level, bool verbose) {
     const int nr_iters_em = 1 + 2 * level;
+    // coarser levels require lesser iterations to converge
     const int nr_iters_nnf = static_cast<int>(std::min(7, 1 + level));
     const int patch_size = m_distance_metric->patch_size();
 
@@ -130,6 +131,10 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source, MaskedImag
         if (verbose) std::cout << "EM Iteration: " << iter_em << std::endl;
 
         auto size = source.size();
+        // iterates every pixel and checks if 
+        // the patch centered at i,j overlaps 
+        // with the mask. If not, sets itself
+        // as nearest patch (identity)
         for (int i = 0; i < size.height; ++i) {
             for (int j = 0; j < size.width; ++j) {
                 if (!source.contains_mask(i, j, patch_size)) {

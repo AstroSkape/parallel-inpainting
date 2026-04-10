@@ -77,13 +77,19 @@ void NearestNeighborField::_initialize_field_from(
 void NearestNeighborField::minimize(int nr_pass) {
 	const auto &this_size = source_size();
 	while (nr_pass--) {
+		// top left to bottom right
 		for (int i = 0; i < this_size.height; ++i)
 			for (int j = 0; j < this_size.width; ++j) {
 				if (m_source.is_globally_masked(i, j))
 					continue;
+				// checks channel 2 - the distance  
+				// score for the current best match
+				// at pixel (i,j). If 0, then best
+				// match is found
 				if (at(i, j, 2) > 0)
 					_minimize_link(i, j, +1);
 			}
+		// bottom right to top left
 		for (int i = this_size.height - 1; i >= 0; --i)
 			for (int j = this_size.width - 1; j >= 0; --j) {
 				if (m_source.is_globally_masked(i, j))
@@ -94,6 +100,7 @@ void NearestNeighborField::minimize(int nr_pass) {
 	}
 }
 
+// Single Iteration. Section 3.2 in the PatchMatch paper
 void NearestNeighborField::_minimize_link(int y, int x, int direction) {
 	const auto &this_size = source_size();
 	const auto &this_target_size = target_size();

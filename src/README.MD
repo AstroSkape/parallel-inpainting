@@ -15,10 +15,11 @@
    ./inpaint
    ```
 
-## Building on GHC / CMU AFS
+## OpenCV Configuration on GHC / CMU AFS
+
+Install OpenCV
 ```
-Install OpenCV (first time only)
-bashwget -O opencv.zip https://github.com/opencv/opencv/archive/4.9.0.zip
+wget -O opencv.zip https://github.com/opencv/opencv/archive/4.9.0.zip
 unzip opencv.zip && mkdir -p opencv-build && cd opencv-build
 cmake ../opencv-4.9.0 \
   -DCMAKE_INSTALL_PREFIX=$HOME/local \
@@ -28,10 +29,13 @@ cmake ../opencv-4.9.0 \
 make -j$(nproc)
 make install
 ```
-cd ~ && rm -rf opencv-build opencv-4.9.0 opencv.zip
 
-bashexport LD_LIBRARY_PATH=$HOME/local/lib:$LD_LIBRARY_PATH
+Finally delete all files created
+``` cd ~ && rm -rf opencv-build opencv-4.9.0 opencv.zip ```
+
 Add this to ~/.bashrc to persist it.
+```export LD_LIBRARY_PATH=$HOME/local/lib:$LD_LIBRARY_PATH```
+
 
 ## References
 

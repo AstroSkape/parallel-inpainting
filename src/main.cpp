@@ -26,8 +26,10 @@ int main()
     auto metric = PatchSSDDistanceMetric(3);
     auto result = Inpainting(prunedImg, mask, &metric).run(true, false);
 
-    cv::imshow("Result", result);
-    cv::waitKey();
+    // cv::imshow("Result", result);
+    // cv::waitKey();
+
+    bool success = cv::imwrite("../images/output.png", result);
 
     return 0;
 }

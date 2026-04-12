@@ -42,13 +42,13 @@ namespace {
  * This algorithm uses a version proposed by Xavier Philippeau.
  */
 
-Inpainting::Inpainting(cv::Mat image, cv::Mat mask, const PatchDistanceMetric *metric)
-    : m_initial(image, mask), m_distance_metric(metric), m_pyramid(), m_source2target(), m_target2source() {
+Inpainting::Inpainting(cv::Mat image, cv::Mat mask, const PatchDistanceMetric *metric, bool is_gpu_enabled)
+    : m_initial(image, mask), m_distance_metric(metric), m_pyramid(), m_source2target(), m_target2source(), m_gpu_enabled(is_gpu_enabled) {
     _initialize_pyramid();
 }
 
-Inpainting::Inpainting(cv::Mat image, cv::Mat mask, cv::Mat global_mask, const PatchDistanceMetric *metric)
-    : m_initial(image, mask, global_mask), m_distance_metric(metric), m_pyramid(), m_source2target(), m_target2source() {
+Inpainting::Inpainting(cv::Mat image, cv::Mat mask, cv::Mat global_mask, const PatchDistanceMetric *metric, bool is_gpu_enabled)
+    : m_initial(image, mask, global_mask), m_distance_metric(metric), m_pyramid(), m_source2target(), m_target2source(), m_gpu_enabled(is_gpu_enabled) {
     _initialize_pyramid();
 }
 
@@ -144,8 +144,8 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source, MaskedImag
             }
         }
         if (verbose) std::cout << "  NNF minimization started." << std::endl;
-        m_source2target.minimize(nr_iters_nnf);
-        m_target2source.minimize(nr_iters_nnf);
+        m_source2target.minimize(nr_iters_nnf, m_gpu_enabled);
+        m_target2source.minimize(nr_iters_nnf, m_gpu_enabled);
         if (verbose) std::cout << "  NNF minimization finished." << std::endl;
 
         // Instead of upsizing the final target, we build the last target from the next level source image.

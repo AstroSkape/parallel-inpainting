@@ -74,15 +74,21 @@ void NearestNeighborField::_initialize_field_from(
 	_randomize_field(max_retry, false);
 }
 
-void NearestNeighborField::minimize(int nr_pass) {
+void NearestNeighborField::minimize(int nr_pass, bool is_gpu_enabled) {
 	const auto &this_size = source_size();
+
+	if (is_gpu_enabled) {
+		minimize_cuda(nr_pass);
+		return;
+	}
+
 	while (nr_pass--) {
 		// top left to bottom right
 		for (int i = 0; i < this_size.height; ++i)
 			for (int j = 0; j < this_size.width; ++j) {
 				if (m_source.is_globally_masked(i, j))
 					continue;
-				// checks channel 2 - the distance  
+				// checks channel 2 - the distance
 				// score for the current best match
 				// at pixel (i,j). If 0, then best
 				// match is found

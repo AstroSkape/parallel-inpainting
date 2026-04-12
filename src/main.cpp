@@ -2,12 +2,12 @@
 #include <iostream>
 
 #include "../include/inpaint.h"
+#include "../include/CycleTimer.h"
 
 using namespace std;
 
 int main()
 {
-    std::cout << "Hello" << endl;
     // read image
     cv::Mat prunedImg = cv::imread("../images/forest_pruned.bmp", cv::IMREAD_COLOR);
     
@@ -23,12 +23,17 @@ int main()
         }
     }
 
+    bool is_gpu_enabled = false;
     auto metric = PatchSSDDistanceMetric(3);
-    auto result = Inpainting(prunedImg, mask, &metric).run(true, false);
+    double startTime = CycleTimer::currentSeconds();
+    auto result = Inpainting(prunedImg, mask, &metric, is_gpu_enabled).run(true, false);
+    double endTime = CycleTimer::currentSeconds();
 
     // cv::imshow("Result", result);
     // cv::waitKey();
 
+    std::string ctx = is_gpu_enabled ? "GPU" : "CPU";
+    printf("Processing Time (%s): %lfs\n", ctx.c_str(), endTime - startTime);
     bool success = cv::imwrite("../images/output.png", result);
 
     return 0;

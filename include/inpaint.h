@@ -4,9 +4,9 @@
 
 class Inpainting {
   public:
-	Inpainting(cv::Mat image, cv::Mat mask, const PatchDistanceMetric *metric);
+	Inpainting(cv::Mat image, cv::Mat mask, const PatchDistanceMetric *metric, bool is_gpu_enabled);
 	Inpainting(cv::Mat image, cv::Mat mask, cv::Mat global_mask,
-			   const PatchDistanceMetric *metric);
+			   const PatchDistanceMetric *metric, bool is_gpu_enabled);
 	cv::Mat run(bool verbose = false, bool verbose_visualize = false,
 				unsigned int random_seed = 1212);
 
@@ -26,4 +26,5 @@ class Inpainting {
 	NearestNeighborField m_source2target;
 	NearestNeighborField m_target2source;
 	const PatchDistanceMetric *m_distance_metric;
+	bool m_gpu_enabled;
 };

@@ -10,6 +10,9 @@ int main()
 {
     // read image
     cv::Mat prunedImg = cv::imread("../images/forest_pruned.bmp", cv::IMREAD_COLOR);
+
+    printf("Image dimensions :\n");
+    printf("Height: %d, Width: %d\n", prunedImg.size().height, prunedImg.size().width);
     
     // create mask
     cv::Mat mask = cv::Mat(prunedImg.size(), CV_8UC1);
@@ -23,18 +26,33 @@ int main()
         }
     }
 
-    bool is_gpu_enabled = false;
     auto metric = PatchSSDDistanceMetric(3);
     double startTime = CycleTimer::currentSeconds();
-    auto result = Inpainting(prunedImg, mask, &metric, is_gpu_enabled).run(true, false);
+    auto cpu_output = Inpainting(prunedImg, mask, &metric, false).run(false, false);
     double endTime = CycleTimer::currentSeconds();
+
+    printf("CPU Processing time: %lfs\n", endTime - startTime);
+
+    startTime = CycleTimer::currentSeconds();
+    auto gpu_output = Inpainting(prunedImg, mask, &metric, true).run(false, false);
+    endTime = CycleTimer::currentSeconds();
+
+    printf("GPU Processing time: %lfs\n", endTime - startTime);
+
+    cv::Mat diff;
+    cv::absdiff(cpu_output, gpu_output, diff);
+    double max_diff;
+    cv::minMaxLoc(diff.reshape(1), nullptr, &max_diff); // not tracking min diff
+    cv::Scalar mean, stddev;
+    cv::meanStdDev(diff, mean, stddev);
+    printf("Max diff: %lf, Mean diff: %lf, Stddev: %lf\n", max_diff, mean[0], stddev[0]);
 
     // cv::imshow("Result", result);
     // cv::waitKey();
 
-    std::string ctx = is_gpu_enabled ? "GPU" : "CPU";
-    printf("Processing Time (%s): %lfs\n", ctx.c_str(), endTime - startTime);
-    bool success = cv::imwrite("../images/output.png", result);
+    // std::string ctx = is_gpu_enabled ? "GPU" : "CPU";
+    // std::string output_file = "output_" + ctx + ".png";
+    // bool success = cv::imwrite("../images/" + output_file, result);
 
     return 0;
 }

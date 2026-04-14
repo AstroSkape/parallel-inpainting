@@ -1,9 +1,13 @@
 #include <algorithm>
 #include <cmath>
+#include <omp.h>
 
 #include "../include/masked_image.h"
 #include "../include/nnf.h"
+#include <iostream>
+#include <chrono>
 
+#define TIME_MS(x) std::chrono::duration<double, std::milli>(x).count()
 /**
  * Nearest-Neighbor Field (see PatchMatch algorithm).
  * This algorithme uses a version proposed by Xavier Philippeau.
@@ -29,9 +33,11 @@ void NearestNeighborField::_randomize_field(int max_retry, bool reset) {
 			}
 
 			int i_target = 0, j_target = 0;
+			unsigned int thread_seed = 42 + omp_get_thread_num();
+			// unsigned int thread_seed = 42;
 			for (int t = 0; t < max_retry; ++t) {
-				i_target = rand() % this_size.height;
-				j_target = rand() % this_size.width;
+				i_target = rand_r(&thread_seed) % this_size.height;
+				j_target = rand_r(&thread_seed) % this_size.width;
 				if (m_target.is_globally_masked(i_target, j_target))
 					continue;
 
@@ -75,78 +81,95 @@ void NearestNeighborField::_initialize_field_from(
 }
 
 void NearestNeighborField::minimize(int nr_pass) {
-	const auto &this_size = source_size();
-	while (nr_pass--) {
-		// top left to bottom right
-		for (int i = 0; i < this_size.height; ++i)
-			for (int j = 0; j < this_size.width; ++j) {
-				if (m_source.is_globally_masked(i, j))
-					continue;
-				// checks channel 2 - the distance  
-				// score for the current best match
-				// at pixel (i,j). If 0, then best
-				// match is found
-				if (at(i, j, 2) > 0)
-					_minimize_link(i, j, +1);
-			}
-		// bottom right to top left
-		for (int i = this_size.height - 1; i >= 0; --i)
-			for (int j = this_size.width - 1; j >= 0; --j) {
-				if (m_source.is_globally_masked(i, j))
-					continue;
-				if (at(i, j, 2) > 0)
-					_minimize_link(i, j, -1);
-			}
-	}
+    const auto &this_size = source_size();
+    
+    // compute gradients once before any parallel work
+    m_source.compute_image_gradients();
+    m_target.compute_image_gradients();
+    
+    double prop_time = 0;
+    while (nr_pass--) {
+        auto t1 = std::chrono::high_resolution_clock::now();
+        
+        #pragma omp parallel for schedule(dynamic)
+        for (int i = 0; i < this_size.height; ++i)
+            for (int j = (i % 2 == 0) ? 0 : 1; j < this_size.width; j += 2) {
+                if (m_source.is_globally_masked(i, j)) continue;
+                if (at(i, j, 2) > 0)
+                    _minimize_link(i, j, +1);
+            }
+
+        #pragma omp parallel for schedule(dynamic)
+        for (int i = 0; i < this_size.height; ++i)
+            for (int j = (i % 2 == 0) ? 1 : 0; j < this_size.width; j += 2) {
+                if (m_source.is_globally_masked(i, j)) continue;
+                if (at(i, j, 2) > 0)
+                    _minimize_link(i, j, -1);
+            }
+
+        auto t2 = std::chrono::high_resolution_clock::now();
+        prop_time += TIME_MS(t2 - t1);
+    }
+    std::cout << "  minimize: " << prop_time << "ms" << std::endl;
 }
 
 // Single Iteration. Section 3.2 in the PatchMatch paper
 void NearestNeighborField::_minimize_link(int y, int x, int direction) {
-	const auto &this_size = source_size();
-	const auto &this_target_size = target_size();
-	auto this_ptr = mutable_ptr(y, x);
+    const auto &this_size = source_size();
+    const auto &this_target_size = target_size();
+    auto this_ptr = mutable_ptr(y, x);
+    unsigned int thread_seed = 42 + omp_get_thread_num();
 
-	// propagation along the y direction.
-	if (y - direction >= 0 && y - direction < this_size.height &&
-		!m_source.is_globally_masked(y - direction, x)) {
-		int yp = at(y - direction, x, 0) + direction;
-		int xp = at(y - direction, x, 1);
-		int dp = _distance(y, x, yp, xp);
-		if (dp < at(y, x, 2)) {
-			this_ptr[0] = yp, this_ptr[1] = xp, this_ptr[2] = dp;
-		}
-	}
+    // read current best into local variables
+    int best_y = this_ptr[0];
+    int best_x = this_ptr[1];
+    int best_d = this_ptr[2];
 
-	// propagation along the x direction.
-	if (x - direction >= 0 && x - direction < this_size.width &&
-		!m_source.is_globally_masked(y, x - direction)) {
-		int yp = at(y, x - direction, 0);
-		int xp = at(y, x - direction, 1) + direction;
-		int dp = _distance(y, x, yp, xp);
-		if (dp < at(y, x, 2)) {
-			this_ptr[0] = yp, this_ptr[1] = xp, this_ptr[2] = dp;
-		}
-	}
+    // propagation along y — read neighbor, write to local only
+    if (y - direction >= 0 && y - direction < this_size.height &&
+        !m_source.is_globally_masked(y - direction, x)) {
+        int yp = at(y - direction, x, 0) + direction;
+        int xp = at(y - direction, x, 1);
+        int dp = _distance(y, x, yp, xp);
+        if (dp < best_d) {
+            best_y = yp; best_x = xp; best_d = dp;
+        }
+    }
 
-	// random search with a progressive step size.
-	int random_scale =
-		(std::min(this_target_size.height, this_target_size.width) - 1) / 2;
-	while (random_scale > 0) {
-		int yp = this_ptr[0] + (rand() % (2 * random_scale + 1) - random_scale);
-		int xp = this_ptr[1] + (rand() % (2 * random_scale + 1) - random_scale);
-		yp = clamp(yp, 0, target_size().height - 1);
-		xp = clamp(xp, 0, target_size().width - 1);
+    // propagation along x — read neighbor, write to local only
+    if (x - direction >= 0 && x - direction < this_size.width &&
+        !m_source.is_globally_masked(y, x - direction)) {
+        int yp = at(y, x - direction, 0);
+        int xp = at(y, x - direction, 1) + direction;
+        int dp = _distance(y, x, yp, xp);
+        if (dp < best_d) {
+            best_y = yp; best_x = xp; best_d = dp;
+        }
+    }
 
-		if (m_target.is_globally_masked(yp, xp)) {
-			random_scale /= 2;
-		}
+    // random search — all local
+    int random_scale = (std::min(this_target_size.height, 
+                                  this_target_size.width) - 1) / 2;
+    while (random_scale > 0) {
+        int yp = best_y + (rand_r(&thread_seed) % (2 * random_scale + 1) - random_scale);
+        int xp = best_x + (rand_r(&thread_seed) % (2 * random_scale + 1) - random_scale);
+        yp = clamp(yp, 0, target_size().height - 1);
+        xp = clamp(xp, 0, target_size().width - 1);
+        if (m_target.is_globally_masked(yp, xp)) {
+            random_scale /= 2;
+            continue;
+        }
+        int dp = _distance(y, x, yp, xp);
+        if (dp < best_d) {
+            best_y = yp; best_x = xp; best_d = dp;
+        }
+        random_scale /= 2;
+    }
 
-		int dp = _distance(y, x, yp, xp);
-		if (dp < at(y, x, 2)) {
-			this_ptr[0] = yp, this_ptr[1] = xp, this_ptr[2] = dp;
-		}
-		random_scale /= 2;
-	}
+    // single write back at the end — no mid-function writes
+    this_ptr[0] = best_y;
+    this_ptr[1] = best_x;
+    this_ptr[2] = best_d;
 }
 
 const int PatchDistanceMetric::kDistanceScale = 65535;

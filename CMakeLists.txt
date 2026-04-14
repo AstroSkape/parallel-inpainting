@@ -10,9 +10,10 @@ elseif(UNIX)
 endif()
 
 find_package(OpenCV REQUIRED)
+find_package(OpenMP REQUIRED)
 
 include_directories(${OpenCV_INCLUDE_DIRS} include)
 
 add_executable(inpaint src/main.cpp src/inpaint.cpp src/masked_image.cpp src/nnf.cpp)
 
-target_link_libraries(inpaint ${OpenCV_LIBS})
+target_link_libraries(inpaint ${OpenCV_LIBS} OpenMP::OpenMP_CXX)

@@ -1,4 +1,4 @@
 .cache
 .vscode
 build/
-output.png
+output*.png

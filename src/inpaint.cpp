@@ -5,6 +5,9 @@
 #include "../include/inpaint.h"
 #include "masked_image.h"
 #include <iostream>
+#include <chrono>
+
+#define TIME_MS(x) std::chrono::duration<double, std::milli>(x).count()
 
 namespace {
     static std::vector<double> kDistance2Similarity;
@@ -118,6 +121,7 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source, MaskedImag
     // coarser levels require lesser iterations to converge
     const int nr_iters_nnf = static_cast<int>(std::min(7, 1 + level));
     const int patch_size = m_distance_metric->patch_size();
+    double total_nnf = 0, total_vote = 0;
 
     MaskedImage new_source, new_target;
 
@@ -144,8 +148,11 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source, MaskedImag
             }
         }
         if (verbose) std::cout << "  NNF minimization started." << std::endl;
+        auto t1 = std::chrono::high_resolution_clock::now();
         m_source2target.minimize(nr_iters_nnf);
         m_target2source.minimize(nr_iters_nnf);
+        auto t2 = std::chrono::high_resolution_clock::now();
+        total_nnf += TIME_MS(t2 - t1);
         if (verbose) std::cout << "  NNF minimization finished." << std::endl;
 
         // Instead of upsizing the final target, we build the last target from the next level source image.
@@ -164,6 +171,7 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source, MaskedImag
         vote.setTo(cv::Scalar::all(0));
 
         // Votes for best patch from NNF Source->Target (completeness) and Target->Source (coherence).
+        auto t3 = std::chrono::high_resolution_clock::now();
         _expectation_step(m_source2target, 1, vote, new_source, upscaled);
         if (verbose) std::cout << "  Expectation source to target finished." << std::endl;
         _expectation_step(m_target2source, 0, vote, new_source, upscaled);
@@ -171,8 +179,13 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source, MaskedImag
 
         // Compile votes and update pixel values.
         _maximization_step(new_target, vote);
+        auto t4 = std::chrono::high_resolution_clock::now();
+        total_vote += TIME_MS(t4 - t3);
         if (verbose) std::cout << "  Minimization step finished." << std::endl;
     }
+    std::cout << "Level " << level 
+              << " | NNF: " << total_nnf << "ms"
+              << " | Vote: " << total_vote << "ms" << std::endl;
 
     return new_target;
 }

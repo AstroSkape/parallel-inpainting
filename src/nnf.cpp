@@ -86,6 +86,8 @@ void NearestNeighborField::minimize(int nr_pass) {
     // compute gradients once before any parallel work
     m_source.compute_image_gradients();
     m_target.compute_image_gradients();
+	std::vector<unsigned int> seeds(omp_get_max_threads());
+	for (int t = 0; t < seeds.size(); ++t) seeds[t] = t * 1234567;
     
     double prop_time = 0;
     while (nr_pass--) {
@@ -96,7 +98,7 @@ void NearestNeighborField::minimize(int nr_pass) {
             for (int j = (i % 2 == 0) ? 0 : 1; j < this_size.width; j += 2) {
                 if (m_source.is_globally_masked(i, j)) continue;
                 if (at(i, j, 2) > 0)
-                    _minimize_link(i, j, +1);
+                    _minimize_link(i, j, +1, rand_r(&seeds[omp_get_thread_num()]));
             }
 
         #pragma omp parallel for schedule(dynamic)
@@ -104,7 +106,7 @@ void NearestNeighborField::minimize(int nr_pass) {
             for (int j = (i % 2 == 0) ? 1 : 0; j < this_size.width; j += 2) {
                 if (m_source.is_globally_masked(i, j)) continue;
                 if (at(i, j, 2) > 0)
-                    _minimize_link(i, j, -1);
+                    _minimize_link(i, j, -1, rand_r(&seeds[omp_get_thread_num()]));
             }
 
         auto t2 = std::chrono::high_resolution_clock::now();
@@ -114,7 +116,7 @@ void NearestNeighborField::minimize(int nr_pass) {
 }
 
 // Single Iteration. Section 3.2 in the PatchMatch paper
-void NearestNeighborField::_minimize_link(int y, int x, int direction) {
+void NearestNeighborField::_minimize_link(int y, int x, int direction, uint rand_val) {
     const auto &this_size = source_size();
     const auto &this_target_size = target_size();
     auto this_ptr = mutable_ptr(y, x);
@@ -151,8 +153,8 @@ void NearestNeighborField::_minimize_link(int y, int x, int direction) {
     int random_scale = (std::min(this_target_size.height, 
                                   this_target_size.width) - 1) / 2;
     while (random_scale > 0) {
-        int yp = best_y + (rand_r(&thread_seed) % (2 * random_scale + 1) - random_scale);
-        int xp = best_x + (rand_r(&thread_seed) % (2 * random_scale + 1) - random_scale);
+        int yp = best_y + (rand_val % (2 * random_scale + 1) - random_scale);
+        int xp = best_x + (rand_val % (2 * random_scale + 1) - random_scale);
         yp = clamp(yp, 0, target_size().height - 1);
         xp = clamp(xp, 0, target_size().width - 1);
         if (m_target.is_globally_masked(yp, xp)) {

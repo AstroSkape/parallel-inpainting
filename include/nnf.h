@@ -65,7 +65,7 @@ class NearestNeighborField {
 	void _randomize_field(int max_retry = 20, bool reset = true);
 	void _initialize_field_from(const NearestNeighborField &other,
 								int max_retry);
-	void _minimize_link(int y, int x, int direction);
+	void _minimize_link(int y, int x, int direction, uint rand_val);
 
 	MaskedImage m_source;
 	MaskedImage m_target;

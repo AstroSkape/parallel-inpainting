@@ -6,53 +6,51 @@
 
 using namespace std;
 
-int main()
+cv::Mat createMask(cv::Mat imageWithHole)
 {
-    // read image
-    cv::Mat prunedImg = cv::imread("../images/forest_pruned.bmp", cv::IMREAD_COLOR);
-
-    printf("Image dimensions :\n");
-    printf("Height: %d, Width: %d\n", prunedImg.size().height, prunedImg.size().width);
-    
     // create mask
-    cv::Mat mask = cv::Mat(prunedImg.size(), CV_8UC1);
-    for (size_t i = 0; i < prunedImg.size().height; i++)
+    cv::Mat mask = cv::Mat(imageWithHole.size(), CV_8UC1);
+    for (size_t i = 0; i < imageWithHole.size().height; i++)
     {
-        for (size_t j = 0; j < prunedImg.size().width; j++)
+        for (size_t j = 0; j < imageWithHole.size().width; j++)
         {
-            cv::Vec3b pixel = prunedImg.at<cv::Vec3b>(i, j);
+            cv::Vec3b pixel = imageWithHole.at<cv::Vec3b>(i, j);
             if (pixel[0] == 255 && pixel[1] == 255 && pixel[2] == 255)
                 mask.at<unsigned char>(i, j) = 1;
         }
     }
+    return mask;
+}
 
-    // auto metric = PatchSSDDistanceMetric(3);
-    // double startTime = CycleTimer::currentSeconds();
-    // auto cpu_output = Inpainting(prunedImg, mask, &metric, false).run(false, false);
-    // double endTime = CycleTimer::currentSeconds();
+double getExecutionTime(bool is_gpu_enabled, cv::Mat &imageWithHole, cv::Mat &mask, PatchDistanceMetric &metric)
+{
+    double startTime = CycleTimer::currentSeconds();
+    auto output = Inpainting(imageWithHole, mask, &metric, is_gpu_enabled).run(false, false);
+    double endTime = CycleTimer::currentSeconds();
 
-    // printf("CPU Processing time: %lfs\n", endTime - startTime);
+    std::string ctx = is_gpu_enabled ? "GPU" : "CPU";
+    std::string output_file = "output_" + ctx + ".png";
+    bool success = cv::imwrite("../images/" + output_file, output);
 
-    startTime = CycleTimer::currentSeconds();
-    auto gpu_output = Inpainting(prunedImg, mask, &metric, true).run(false, false);
-    endTime = CycleTimer::currentSeconds();
+    return endTime - startTime;
+}
 
-    printf("GPU Processing time: %lfs\n", endTime - startTime);
+int main()
+{
+    // read image
+    cv::Mat prunedImg = cv::imread("../images/forest_pruned.bmp", cv::IMREAD_COLOR);
+    auto mask = createMask(prunedImg);
+    auto metric = PatchSSDDistanceMetric(3);
 
-    cv::Mat diff;
-    cv::absdiff(cpu_output, gpu_output, diff);
-    double max_diff;
-    cv::minMaxLoc(diff.reshape(1), nullptr, &max_diff); // not tracking min diff
-    cv::Scalar mean, stddev;
-    cv::meanStdDev(diff, mean, stddev);
-    printf("Max diff: %lf, Mean diff: %lf, Stddev: %lf\n", max_diff, mean[0], stddev[0]);
-
-    // cv::imshow("Result", result);
-    // cv::waitKey();
-
-    // std::string ctx = is_gpu_enabled ? "GPU" : "CPU";
-    // std::string output_file = "output_" + ctx + ".png";
-    // bool success = cv::imwrite("../images/" + output_file, result);
+    auto serial = getExecutionTime(false, prunedImg, mask, metric);
+    auto parallel = getExecutionTime(true, prunedImg, mask, metric);
+    double speedup = serial / parallel;
+    
+    printf("Image dimensions :\n");
+    printf("Height: %d, Width: %d\n", prunedImg.size().height, prunedImg.size().width);
+    printf("CPU Processing time: %lfs\n", serial);
+    printf("GPU Processing time: %lfs\n", parallel);
+    printf("Speedup observed: %lf\n", speedup);
 
     return 0;
 }

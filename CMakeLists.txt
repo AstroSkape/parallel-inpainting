@@ -19,6 +19,6 @@ find_package(OpenCV REQUIRED)
 
 include_directories(${OpenCV_INCLUDE_DIRS} include)
 
-add_executable(inpaint src/main.cpp src/inpaint.cpp src/masked_image.cpp src/nnf.cpp src/nnf.cu src/cuda.cpp)
+add_executable(inpaint src/main.cpp src/inpaint.cpp src/masked_image.cpp src/nnf.cpp src/nnf.cu src/cuda.cpp src/cuda_helpers.cu)
 
 target_link_libraries(inpaint ${OpenCV_LIBS})

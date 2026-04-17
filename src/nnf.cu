@@ -32,10 +32,10 @@ compute_patch_dist(const unsigned char *src_img, const unsigned char *tgt_img,
 				   const unsigned char *tgt_gmask, bool has_gmask, int ys,
 				   int xs, int yt, int xt, int src_h, int src_w, int tgt_h,
 				   int tgt_w, int patch_size) {
-	long double distance = 0;
-	long double wsum = 0;
-	long double kSSDScale = 9 * 255 * 255;
-	long double kDistanceScale = 65535;
+	double distance = 0;
+	double wsum = 0;
+	double kSSDScale = 9 * 255 * 255;
+	double kDistanceScale = 65535;
 
 	for (int dy = -patch_size; dy <= patch_size; ++dy) {
 		const int yys = ys + dy, yyt = yt + dy;

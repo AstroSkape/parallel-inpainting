@@ -26,12 +26,12 @@ int main()
         }
     }
 
-    auto metric = PatchSSDDistanceMetric(3);
-    double startTime = CycleTimer::currentSeconds();
-    auto cpu_output = Inpainting(prunedImg, mask, &metric, false).run(false, false);
-    double endTime = CycleTimer::currentSeconds();
+    // auto metric = PatchSSDDistanceMetric(3);
+    // double startTime = CycleTimer::currentSeconds();
+    // auto cpu_output = Inpainting(prunedImg, mask, &metric, false).run(false, false);
+    // double endTime = CycleTimer::currentSeconds();
 
-    printf("CPU Processing time: %lfs\n", endTime - startTime);
+    // printf("CPU Processing time: %lfs\n", endTime - startTime);
 
     startTime = CycleTimer::currentSeconds();
     auto gpu_output = Inpainting(prunedImg, mask, &metric, true).run(false, false);

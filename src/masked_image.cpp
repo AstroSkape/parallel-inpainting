@@ -18,6 +18,11 @@ bool MaskedImage::contains_mask(int y, int x, int patch_size) const {
 	return false;
 }
 
+/**
+ * Creates new image at half the original resolution.
+ * Does a Gaussian blur approximation using a binomial kernel
+ * which gives more weightage towards pixels in the center
+ */
 MaskedImage MaskedImage::downsample() const {
 	const auto &kernel_size = MaskedImage::kDownsampleKernelSize;
 	const auto &kernel = MaskedImage::kDownsampleKernel;

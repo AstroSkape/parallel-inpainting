@@ -163,13 +163,19 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source, MaskedImag
         auto vote = cv::Mat(new_target.size(), CV_64FC4);
         vote.setTo(cv::Scalar::all(0));
 
-        // Votes for best patch from NNF Source->Target (completeness) and Target->Source (coherence).
+        // E step - Votes for best patch from NNF Source->Target (completeness) and Target->Source (coherence).
+        
+        // Completeness - ensures that the output image contains as much information as possible from
+        // the input as possible
         _expectation_step(m_source2target, 1, vote, new_source, upscaled);
         if (verbose) std::cout << "  Expectation source to target finished." << std::endl;
+        
+        // Coherence - ensures that the output is coherent wrt the input and that new visual 
+        // structures are penalised 
         _expectation_step(m_target2source, 0, vote, new_source, upscaled);
         if (verbose) std::cout << "  Expectation target to source finished." << std::endl;
 
-        // Compile votes and update pixel values.
+        // M step - Compile votes (averaged) and update pixel values.
         _maximization_step(new_target, vote);
         if (verbose) std::cout << "  Minimization step finished." << std::endl;
     }

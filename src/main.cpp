@@ -29,6 +29,8 @@ void check_correctness(const std::string& serial_path,
     int differing_pixels = 0;
     double total_diff = 0;
     int max_diff = 0;
+    std::vector<double> diffs;
+    diffs.reserve(total_pixels);
 
     for (int i = 0; i < serial.rows; i++) {
         for (int j = 0; j < serial.cols; j++) {
@@ -43,10 +45,17 @@ void check_correctness(const std::string& serial_path,
             if (diff > 0) differing_pixels++;
             total_diff += diff;
             max_diff = std::max(max_diff, diff);
+            diffs.push_back(diff);
         }
     }
 
     double avg_diff = total_diff / total_pixels;
+
+    double variance = 0;
+    for (double d : diffs) {
+        variance += (d - avg_diff) * (d - avg_diff);
+    }
+    double stddev = std::sqrt(variance / total_pixels);
 
     // PSNR computation
     cv::Mat diff_mat;
@@ -61,6 +70,7 @@ void check_correctness(const std::string& serial_path,
               << " (" << (100.0 * differing_pixels / total_pixels) << "%)" << std::endl;
     std::cout << "Average diff:      " << avg_diff << std::endl;
     std::cout << "Max diff:          " << max_diff << std::endl;
+    std::cout << "Stddev diff:       " << stddev << std::endl;
     std::cout << "PSNR (serial vs parallel): " << psnr << " dB" << std::endl;
     
     if (psnr > 35.0) {
@@ -100,10 +110,15 @@ int main(int argc, char* argv[]) {
                 mask.at<unsigned char>(i, j) = 1;
         }
     }
+    auto wall_start = std::chrono::high_resolution_clock::now();
 
     auto metric = PatchSSDDistanceMetric(3);
     auto result = Inpainting(prunedImg, mask, &metric).run(true, false);
-    
+    auto wall_end = std::chrono::high_resolution_clock::now();
+
+    double wall_ms = std::chrono::duration<double, std::milli>(wall_end - wall_start).count();
+    std::cout << "Total processing time: " << wall_ms / 1000.0 << "s" << std::endl;
+
     cv::imwrite(output_filename, result);
     std::cout << "Output written to: " << output_filename << std::endl;
 

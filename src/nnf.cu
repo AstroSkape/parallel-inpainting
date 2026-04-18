@@ -1,7 +1,7 @@
+#include "../include/cuda_helpers.cuh"
 #include "../include/nnf.h"
 #include <cuda_runtime.h>
 #include <iostream>
-#include "../include/cuda_helpers.cuh"
 
 #define RED 0
 #define BLACK 1
@@ -257,23 +257,30 @@ extern "C" void launch_nnf_minimize(
 	int tgt_size = tgt_height * tgt_width;
 
 	// copy from host to device
-	cudaCheckError(cudaMemcpy(bufs->field_ptr, field_ptr, src_size * 3 * sizeof(int),
-			   cudaMemcpyHostToDevice));
+	cudaCheckError(cudaMemcpy(bufs->field_ptr, field_ptr,
+							  src_size * 3 * sizeof(int),
+							  cudaMemcpyHostToDevice));
 	cudaCheckError(cudaMemcpy(bufs->src_bufs.img, src_img, src_size * 3,
-			   cudaMemcpyHostToDevice));
+							  cudaMemcpyHostToDevice));
 	cudaCheckError(cudaMemcpy(bufs->tgt_bufs.img, tgt_img, tgt_size * 3,
-			   cudaMemcpyHostToDevice));
-	cudaCheckError(cudaMemcpy(bufs->src_bufs.gx, src_gx, src_size * 3, cudaMemcpyHostToDevice));
-	cudaCheckError(cudaMemcpy(bufs->src_bufs.gy, src_gy, src_size * 3, cudaMemcpyHostToDevice));
-	cudaCheckError(cudaMemcpy(bufs->tgt_bufs.gx, tgt_gx, tgt_size * 3, cudaMemcpyHostToDevice));
-	cudaCheckError(cudaMemcpy(bufs->tgt_bufs.gy, tgt_gy, tgt_size * 3, cudaMemcpyHostToDevice));
-	cudaCheckError(cudaMemcpy(bufs->src_bufs.mask, src_mask, src_size, cudaMemcpyHostToDevice));
-	cudaCheckError(cudaMemcpy(bufs->tgt_bufs.mask, tgt_mask, tgt_size, cudaMemcpyHostToDevice));
+							  cudaMemcpyHostToDevice));
+	cudaCheckError(cudaMemcpy(bufs->src_bufs.gx, src_gx, src_size * 3,
+							  cudaMemcpyHostToDevice));
+	cudaCheckError(cudaMemcpy(bufs->src_bufs.gy, src_gy, src_size * 3,
+							  cudaMemcpyHostToDevice));
+	cudaCheckError(cudaMemcpy(bufs->tgt_bufs.gx, tgt_gx, tgt_size * 3,
+							  cudaMemcpyHostToDevice));
+	cudaCheckError(cudaMemcpy(bufs->tgt_bufs.gy, tgt_gy, tgt_size * 3,
+							  cudaMemcpyHostToDevice));
+	cudaCheckError(cudaMemcpy(bufs->src_bufs.mask, src_mask, src_size,
+							  cudaMemcpyHostToDevice));
+	cudaCheckError(cudaMemcpy(bufs->tgt_bufs.mask, tgt_mask, tgt_size,
+							  cudaMemcpyHostToDevice));
 	if (has_gmask) {
 		cudaCheckError(cudaMemcpy(bufs->src_bufs.gmask, src_gmask, src_size,
-				   cudaMemcpyHostToDevice));
+								  cudaMemcpyHostToDevice));
 		cudaCheckError(cudaMemcpy(bufs->tgt_bufs.gmask, tgt_gmask, tgt_size,
-				   cudaMemcpyHostToDevice));
+								  cudaMemcpyHostToDevice));
 	}
 
 	int num_threads = 256;
@@ -301,6 +308,7 @@ extern "C" void launch_nnf_minimize(
 	}
 
 	// copy back from device to host
-	cudaCheckError(cudaMemcpy(field_ptr, bufs->field_ptr, src_size * 3 * sizeof(int),
-			   cudaMemcpyDeviceToHost));
+	cudaCheckError(cudaMemcpy(field_ptr, bufs->field_ptr,
+							  src_size * 3 * sizeof(int),
+							  cudaMemcpyDeviceToHost));
 }

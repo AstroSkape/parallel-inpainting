@@ -74,10 +74,20 @@ void NearestNeighborField::_initialize_field_from(
 	_randomize_field(max_retry, false);
 }
 
+bool isGpuCandidate(cv::Size size) {
+	int h = size.height;
+	int w = size.width;
+
+	int num_threads = 256;
+	int blocks = ((h * w) + num_threads - 1) / num_threads;
+
+	return blocks > 1;
+}
+
 void NearestNeighborField::minimize(int nr_pass, bool is_gpu_enabled) {
 	const auto &this_size = source_size();
 
-	if (is_gpu_enabled) {
+	if (is_gpu_enabled && isGpuCandidate(this_size)) {
 		minimize_cuda(nr_pass);
 		return;
 	}

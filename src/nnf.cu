@@ -1,4 +1,5 @@
 #include <cuda_runtime.h>
+#include <iostream>
 
 #define RED 0
 #define BLACK 1
@@ -32,10 +33,10 @@ compute_patch_dist(const unsigned char *src_img, const unsigned char *tgt_img,
 				   const unsigned char *tgt_gmask, bool has_gmask, int ys,
 				   int xs, int yt, int xt, int src_h, int src_w, int tgt_h,
 				   int tgt_w, int patch_size) {
-	double distance = 0;
-	double wsum = 0;
-	double kSSDScale = 9 * 255 * 255;
-	double kDistanceScale = 65535;
+	float distance = 0;
+	float wsum = 0;
+	const float kSSDScale = 9 * 255 * 255;
+	const float kDistanceScale = 65535;
 
 	for (int dy = -patch_size; dy <= patch_size; ++dy) {
 		const int yys = ys + dy, yyt = yt + dy;
@@ -117,8 +118,8 @@ __global__ void nnf_minimize_kernel(
 
 	// propagation phase
 	for (int i = 0; i < 4; i++) {
-		int newy = p_x + directions[i][0];
-		int newx = p_y + directions[i][1];
+		int newy = p_y + directions[i][0];
+		int newx = p_x + directions[i][1];
 
 		if (newy < 0 || newy >= src_h || newx < 0 || newx >= src_w)
 			continue;
@@ -169,6 +170,7 @@ __global__ void nnf_minimize_kernel(
 			nnf_best_d = dp;
 		}
 		random_scale /= 2;
+		step++;
 	}
 
 	nnf_field[0] = nnf_best_y;
@@ -229,6 +231,8 @@ extern "C" void launch_nnf_minimize(
 	int num_threads = 256;
 	int blocks = (src_size + num_threads - 1) / num_threads;
 
+	printf("[CUDA] Number of blocks: %d\n", blocks);
+
 	for (int i = 0; i < nr_pass; i++) {
 		unsigned int seed = random_seed + i * 12345u;
 
@@ -238,14 +242,14 @@ extern "C" void launch_nnf_minimize(
 			d_tgt_gy, d_src_mask, d_tgt_mask, d_src_gmask, d_tgt_gmask,
 			has_gmask, src_height, src_width, tgt_height, tgt_width, patch_size,
 			RED, seed);
-		cudaDeviceSynchronize();
+		// cudaDeviceSynchronize();
 		// call kernel on black pixels
 		nnf_minimize_kernel<<<blocks, num_threads>>>(
 			d_field_ptr, d_src_img, d_tgt_img, d_src_gx, d_src_gy, d_tgt_gx,
 			d_tgt_gy, d_src_mask, d_tgt_mask, d_src_gmask, d_tgt_gmask,
 			has_gmask, src_height, src_width, tgt_height, tgt_width, patch_size,
 			BLACK, seed);
-		cudaDeviceSynchronize();
+		// cudaDeviceSynchronize();
 	}
 
 	// copy back from device to host

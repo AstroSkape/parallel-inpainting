@@ -2,10 +2,10 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
+#include "../include/cuda_helpers.h"
 #include "../include/inpaint.h"
 #include "masked_image.h"
 #include <iostream>
-#include "../include/cuda_helpers.h"
 
 namespace {
 // lookup table that converts patch distance to similarity
@@ -168,7 +168,7 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 			std::cout << "  NNF minimization started." << std::endl;
 		m_source2target.minimize(nr_iters_nnf, m_gpu_enabled);
 		m_target2source.minimize(nr_iters_nnf, m_gpu_enabled);
-        cuda_device_sync();
+		cuda_device_sync();
 		if (verbose)
 			std::cout << "  NNF minimization finished." << std::endl;
 

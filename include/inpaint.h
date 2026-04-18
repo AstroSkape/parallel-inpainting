@@ -27,4 +27,5 @@ class Inpainting {
 	NearestNeighborField m_target2source;
 	const PatchDistanceMetric *m_distance_metric;
 	bool m_gpu_enabled;
+	CudaNNFDeviceBuffers m_cuda_buffers;
 };

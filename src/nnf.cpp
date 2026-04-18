@@ -74,7 +74,7 @@ void NearestNeighborField::_initialize_field_from(
 	_randomize_field(max_retry, false);
 }
 
-bool isGpuCandidate(cv::Size size) {
+bool checkGpuCandidacy(cv::Size size) {
 	int h = size.height;
 	int w = size.width;
 
@@ -84,13 +84,18 @@ bool isGpuCandidate(cv::Size size) {
 	return blocks > 1;
 }
 
-void NearestNeighborField::minimize(int nr_pass, bool is_gpu_enabled) {
+void NearestNeighborField::minimize(int nr_pass, bool is_gpu_enabled, CudaNNFDeviceBuffers *cuda_bufs) {
 	const auto &this_size = source_size();
 
-	if (is_gpu_enabled && isGpuCandidate(this_size)) {
-		minimize_cuda(nr_pass);
+	if (is_gpu_enabled) {
+		minimize_cuda(nr_pass, cuda_bufs);
 		return;
 	}
+
+	// if (is_gpu_enabled && isGpuCandidate(this_size)) {
+	// 	minimize_cuda(nr_pass);
+	// 	return;
+	// }
 
 	while (nr_pass--) {
 		// top left to bottom right

@@ -1,6 +1,34 @@
 #include "masked_image.h"
 #include <opencv2/core.hpp>
 
+bool checkGpuCandidacy(cv::Size size);
+
+struct CudaImageDeviceBuffers {
+	unsigned char *img = nullptr;
+	unsigned char *gx = nullptr;
+	unsigned char *gy = nullptr;
+	unsigned char *mask = nullptr;
+	unsigned char *gmask = nullptr;
+
+	int pixel_capacity = 0;
+	
+	void allocate_buffers(int pixels, bool has_gmask);
+
+	~CudaImageDeviceBuffers();
+};
+
+struct CudaNNFDeviceBuffers {
+	int *field_ptr = nullptr;
+
+	CudaImageDeviceBuffers src_bufs;
+	CudaImageDeviceBuffers tgt_bufs;
+	bool gmask_allocated = false;
+
+	void allocate_device_buffers(int src_pixels, int tgt_pixels, bool need_gmask);
+
+	~CudaNNFDeviceBuffers();
+};
+
 class PatchDistanceMetric {
   public:
 	PatchDistanceMetric(int patch_size) : m_patch_size(patch_size) {}
@@ -53,8 +81,8 @@ class NearestNeighborField {
 		ptr[0] = y, ptr[1] = x, ptr[2] = 0;
 	}
 
-	void minimize(int nr_pass, bool is_gpu_enabled);
-	void minimize_cuda(int nr_pass);
+	void minimize(int nr_pass, bool is_gpu_enabled, CudaNNFDeviceBuffers *cuda_bufs = nullptr);
+	void minimize_cuda(int nr_pass, CudaNNFDeviceBuffers *bufs);
 
   private:
 	inline int _distance(int source_y, int source_x, int target_y,

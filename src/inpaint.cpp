@@ -141,6 +141,7 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 
 	MaskedImage new_source, new_target;
 
+    LOG("level %d, num_iters %d\n", level, nr_iters_em); 
 	for (int iter_em = 0; iter_em < nr_iters_em; ++iter_em) {
 		if (iter_em != 0) {
 			m_source2target.set_target(new_target);
@@ -152,6 +153,7 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 			std::cout << "EM Iteration: " << iter_em << std::endl;
 
 		auto size = source.size();
+		bool is_gpu_candidate = checkGpuCandidacy(size);
 		// iterates every pixel and checks if
 		// the patch centered at i,j overlaps
 		// with the mask. If not, sets itself
@@ -166,8 +168,35 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 		}
 		if (verbose)
 			std::cout << "  NNF minimization started." << std::endl;
-		m_source2target.minimize(nr_iters_nnf, m_gpu_enabled);
-		m_target2source.minimize(nr_iters_nnf, m_gpu_enabled);
+		if (m_gpu_enabled && is_gpu_candidate) {
+			if (iter_em == 0) {
+				auto src_size = source.size();
+				auto tgt_size = target.size();
+				LOG("level %d: allocating device buffers\n", level);
+				m_cuda_buffers.allocate_device_buffers(
+					src_size.height * src_size.width,
+					tgt_size.height * tgt_size.width,
+					!source.global_mask().empty());
+				LOG("level %d: allocate returned\n", level);
+			}
+			m_source2target.minimize(nr_iters_nnf, true, &m_cuda_buffers);
+			m_target2source.minimize(nr_iters_nnf, true, &m_cuda_buffers);
+		} else if (m_gpu_enabled && !is_gpu_candidate) {
+#pragma omp parallel sections
+			{
+#pragma omp section
+				{
+					m_source2target.minimize(nr_iters_nnf, false);
+				}
+#pragma omp section
+				{
+					m_target2source.minimize(nr_iters_nnf, false);
+				}
+			}
+		} else {
+			m_source2target.minimize(nr_iters_nnf, false);
+			m_target2source.minimize(nr_iters_nnf, false);
+		}
 		cuda_device_sync();
 		if (verbose)
 			std::cout << "  NNF minimization finished." << std::endl;

@@ -1,6 +1,7 @@
 #include "../include/cuda_helpers.cuh"
 #include "../include/cuda_helpers.h"
 #include <cuda_runtime.h>
+#include <curand_kernel.h>
 #include <iostream>
 
 #define RED 0
@@ -33,6 +34,27 @@ void realloc_device_ptr(unsigned char **ptr, int new_bytes) {
 	if (*ptr)
 		cudaCheckError(cudaFree(*ptr));
 	cudaCheckError(cudaMalloc(ptr, new_bytes));
+}
+
+__global__ void init_rng_kernel(curandStatePhilox4_32_10_t *states, int n,
+								unsigned long long seed) {
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+	if (idx >= n)
+		return;
+	// subsequence = idx gives each thread a different 2^67-length subsequence,
+	// which is guaranteed non-overlapping.
+	curand_init(seed, idx, 0, &states[idx]);
+}
+
+__global__ void init_rng_kernel_fused(curandStatePhilox4_32_10_t *states, int n,
+									  unsigned long long seed,
+									  unsigned long long seq_offset) {
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+	if (idx >= n)
+		return;
+	// seq_offset lets s2t and t2s have disjoint subsequence ranges so their
+	// streams can never collide even if a_pixels and b_pixels overlap.
+	curand_init(seed, idx + seq_offset, 0, &states[idx]);
 }
 
 /**
@@ -69,6 +91,15 @@ void CudaNNFDeviceBuffers::allocate_device_buffers(int src_pixels,
 		cudaCheckError(cudaMalloc(&field_ptr, src_pixels * 3 * sizeof(int)));
 	}
 
+	// cuRAND state
+	if (src_pixels > rng_capacity) {
+		if (rng_states)
+			cudaCheckError(cudaFree(rng_states));
+		cudaCheckError(cudaMalloc(
+			&rng_states, src_pixels * sizeof(curandStatePhilox4_32_10_t)));
+		rng_capacity = src_pixels;
+	}
+
 	src_bufs.allocate_buffers(src_pixels, need_gmask);
 	tgt_bufs.allocate_buffers(tgt_pixels, need_gmask);
 }
@@ -92,6 +123,22 @@ void CudaFusedNNFDeviceBuffers::allocate_device_buffers(int a_pixels,
 		field_capacity_t2s = b_pixels;
 	}
 
+	if (a_pixels > rng_capacity_s2t) {
+		if (rng_states_s2t)
+			cudaCheckError(cudaFree(rng_states_s2t));
+		cudaCheckError(cudaMalloc(
+			&rng_states_s2t, a_pixels * sizeof(curandStatePhilox4_32_10_t)));
+		rng_capacity_s2t = a_pixels;
+	}
+
+	if (b_pixels > rng_capacity_t2s) {
+		if (rng_states_t2s)
+			cudaCheckError(cudaFree(rng_states_t2s));
+		cudaCheckError(cudaMalloc(
+			&rng_states_t2s, b_pixels * sizeof(curandStatePhilox4_32_10_t)));
+		rng_capacity_t2s = b_pixels;
+	}
+
 	a_bufs.allocate_buffers(a_pixels, need_gmask);
 	b_bufs.allocate_buffers(b_pixels, need_gmask);
 }
@@ -112,12 +159,17 @@ CudaFusedNNFDeviceBuffers::~CudaFusedNNFDeviceBuffers() {
 		cudaCheckError(cudaFree(field_ptr_s2t));
 	if (field_ptr_t2s)
 		cudaCheckError(cudaFree(field_ptr_t2s));
+	if (rng_states_s2t)
+		cudaCheckError(cudaFree(rng_states_s2t));
+	if (rng_states_t2s)
+		cudaCheckError(cudaFree(rng_states_t2s));
 }
 
 CudaNNFDeviceBuffers::~CudaNNFDeviceBuffers() {
-	if (field_ptr) {
+	if (field_ptr)
 		cudaCheckError(cudaFree(field_ptr));
-	}
+	if (rng_states)
+		cudaCheckError(cudaFree(rng_states));
 }
 
 __device__ int
@@ -193,7 +245,7 @@ __global__ void nnf_minimize_kernel(
 	const unsigned char *src_mask, const unsigned char *tgt_mask,
 	const unsigned char *src_gmask, const unsigned char *tgt_gmask,
 	bool has_gmask, int src_h, int src_w, int tgt_h, int tgt_w, int patch_size,
-	int color, unsigned int seed) {
+	int color, curandStatePhilox4_32_10_t *rng_states) {
 	int idx = blockIdx.x * blockDim.x + threadIdx.x;
 	if (idx >= src_h * src_w)
 		return;
@@ -240,19 +292,18 @@ __global__ void nnf_minimize_kernel(
 	}
 
 	// random search phase
+	curandStatePhilox4_32_10_t rng = rng_states[idx];
+
 	int random_scale = (min(tgt_h, tgt_w) - 1) / 2;
-	int step = 0;
 
 	while (random_scale > 0) {
-		// coprimes used to reduce collisions
-		int yp = device_clamp(nnf_best_y +
-								  rand_range(seed + idx * 1337u + step * 7919u,
-											 -random_scale, random_scale),
-							  0, tgt_h - 1);
-		int xp = device_clamp(nnf_best_x +
-								  rand_range(seed + idx * 1337u + step * 7919u,
-											 -random_scale, random_scale),
-							  0, tgt_w - 1);
+		float ry = curand_uniform(&rng);
+		float rx = curand_uniform(&rng);
+		int dy = (int)((ry * 2.0f - 1.0f) * random_scale);
+		int dx = (int)((rx * 2.0f - 1.0f) * random_scale);
+
+		int yp = device_clamp(nnf_best_y + dy, 0, tgt_h - 1);
+		int xp = device_clamp(nnf_best_x + dx, 0, tgt_w - 1);
 
 		if (has_gmask && tgt_gmask[yp * tgt_w + xp]) {
 			random_scale /= 2;
@@ -268,8 +319,9 @@ __global__ void nnf_minimize_kernel(
 			nnf_best_d = dp;
 		}
 		random_scale /= 2;
-		step++;
 	}
+
+	rng_states[idx] = rng;
 
 	nnf_field[0] = nnf_best_y;
 	nnf_field[1] = nnf_best_x;
@@ -293,17 +345,21 @@ __global__ void nnf_minimize_fused_kernel(
 	const unsigned char *b_img, const unsigned char *b_gx,
 	const unsigned char *b_gy, const unsigned char *b_mask,
 	const unsigned char *b_gmask, bool has_gmask, int a_h, int a_w, int b_h,
-	int b_w, int patch_size, int color, unsigned int seed) {
+	int b_w, int patch_size, int color,
+	curandStatePhilox4_32_10_t *rng_states_s2t,
+	curandStatePhilox4_32_10_t *rng_states_t2s) {
 
 	const int dir = blockIdx.y; // 0 or 1
 
 	int *field;
+	curandStatePhilox4_32_10_t *rng_states;
 	const unsigned char *src_img, *src_gx, *src_gy, *src_mask, *src_gmask;
 	const unsigned char *tgt_img, *tgt_gx, *tgt_gy, *tgt_mask, *tgt_gmask;
 	int src_h, src_w, tgt_h, tgt_w;
 
 	if (dir == DIR_S2T) {
 		field = field_s2t;
+		rng_states = rng_states_s2t;
 		src_img = a_img;
 		src_gx = a_gx;
 		src_gy = a_gy;
@@ -320,6 +376,7 @@ __global__ void nnf_minimize_fused_kernel(
 		tgt_w = b_w;
 	} else {
 		field = field_t2s;
+		rng_states = rng_states_t2s;
 		src_img = b_img;
 		src_gx = b_gx;
 		src_gy = b_gy;
@@ -385,20 +442,18 @@ __global__ void nnf_minimize_fused_kernel(
 
 	// random search phase
 	// a different seed depending on direction
-	const unsigned int dir_seed = seed + (dir == DIR_S2T ? 0u : 0x9E3779B9u);
+	curandStatePhilox4_32_10_t rng = rng_states[idx];
 
 	int random_scale = (min(tgt_h, tgt_w) - 1) / 2;
-	int step = 0;
 
 	while (random_scale > 0) {
-		int yp = device_clamp(
-			nnf_best_y + rand_range(dir_seed + idx * 1337u + step * 7919u,
-									-random_scale, random_scale),
-			0, tgt_h - 1);
-		int xp = device_clamp(
-			nnf_best_x + rand_range(dir_seed + idx * 1337u + step * 7919u,
-									-random_scale, random_scale),
-			0, tgt_w - 1);
+		float ry = curand_uniform(&rng);
+		float rx = curand_uniform(&rng);
+		int dy = (int)((ry * 2.0f - 1.0f) * random_scale);
+		int dx = (int)((rx * 2.0f - 1.0f) * random_scale);
+
+		int yp = device_clamp(nnf_best_y + dy, 0, tgt_h - 1);
+		int xp = device_clamp(nnf_best_x + dx, 0, tgt_w - 1);
 
 		if (has_gmask && tgt_gmask[yp * tgt_w + xp]) {
 			random_scale /= 2;
@@ -414,12 +469,13 @@ __global__ void nnf_minimize_fused_kernel(
 			nnf_best_d = dp;
 		}
 		random_scale /= 2;
-		step++;
 	}
 
+	rng_states[idx] = rng;
+
 	nnf_field[0] = nnf_best_y;
-    nnf_field[1] = nnf_best_x;
-    nnf_field[2] = nnf_best_d;
+	nnf_field[1] = nnf_best_x;
+	nnf_field[2] = nnf_best_d;
 }
 
 extern "C" void launch_fused_nnf_minimize(
@@ -465,6 +521,15 @@ extern "C" void launch_fused_nnf_minimize(
 	const int max_size = (a_size > b_size) ? a_size : b_size;
 	const int blocks_x = (max_size + num_threads - 1) / num_threads;
 
+	const int blocks_a = (a_size + num_threads - 1) / num_threads;
+    const int blocks_b = (b_size + num_threads - 1) / num_threads;
+    const unsigned long long seed64 = (unsigned long long)random_seed;
+
+	init_rng_kernel_fused<<<blocks_a, num_threads>>>(bufs->rng_states_s2t,
+													 a_size, seed64, 0ull);
+	init_rng_kernel_fused<<<blocks_b, num_threads>>>(
+		bufs->rng_states_t2s, b_size, seed64, (unsigned long long)a_size);
+
 	dim3 grid(blocks_x, 2);
 	dim3 block(num_threads);
 
@@ -479,7 +544,7 @@ extern "C" void launch_fused_nnf_minimize(
 			bufs->a_bufs.gx, bufs->a_bufs.gy, bufs->a_bufs.mask,
 			bufs->a_bufs.gmask, bufs->b_bufs.img, bufs->b_bufs.gx,
 			bufs->b_bufs.gy, bufs->b_bufs.mask, bufs->b_bufs.gmask, has_gmask,
-			a.height, a.width, b.height, b.width, patch_size, RED, seed);
+			a.height, a.width, b.height, b.width, patch_size, RED, bufs->rng_states_s2t, bufs->rng_states_t2s);
 
 		// Black phase: both directions together.
 		nnf_minimize_fused_kernel<<<grid, block>>>(
@@ -487,7 +552,7 @@ extern "C" void launch_fused_nnf_minimize(
 			bufs->a_bufs.gx, bufs->a_bufs.gy, bufs->a_bufs.mask,
 			bufs->a_bufs.gmask, bufs->b_bufs.img, bufs->b_bufs.gx,
 			bufs->b_bufs.gy, bufs->b_bufs.mask, bufs->b_bufs.gmask, has_gmask,
-			a.height, a.width, b.height, b.width, patch_size, BLACK, seed);
+			a.height, a.width, b.height, b.width, patch_size, BLACK, bufs->rng_states_s2t, bufs->rng_states_t2s);
 	}
 
 	// --- D2H copies ---------------------------------------------------------
@@ -538,25 +603,29 @@ extern "C" void launch_nnf_minimize(CudaNNFDeviceBuffers *bufs, int *field_ptr,
 	int num_threads = 256;
 	int blocks = (src_size + num_threads - 1) / num_threads;
 
+	// Initialize per-pixel RNG state once per launch.
+	init_rng_kernel<<<blocks, num_threads>>>(bufs->rng_states, src_size,
+											 (unsigned long long)random_seed);
+
 	LOG("[CUDA] Number of blocks: %d\n", blocks);
 
 	for (int i = 0; i < nr_pass; i++) {
-		unsigned int seed = random_seed + i * 12345u;
-
 		// call kernel on red pixels
 		nnf_minimize_kernel<<<blocks, num_threads>>>(
 			bufs->field_ptr, bufs->src_bufs.img, bufs->tgt_bufs.img,
 			bufs->src_bufs.gx, bufs->src_bufs.gy, bufs->tgt_bufs.gx,
 			bufs->tgt_bufs.gy, bufs->src_bufs.mask, bufs->tgt_bufs.mask,
 			bufs->src_bufs.gmask, bufs->tgt_bufs.gmask, has_gmask, src.height,
-			src.width, tgt.height, tgt.width, patch_size, RED, seed);
+			src.width, tgt.height, tgt.width, patch_size, RED,
+			bufs->rng_states);
 		// call kernel on black pixels
 		nnf_minimize_kernel<<<blocks, num_threads>>>(
 			bufs->field_ptr, bufs->src_bufs.img, bufs->tgt_bufs.img,
 			bufs->src_bufs.gx, bufs->src_bufs.gy, bufs->tgt_bufs.gx,
 			bufs->tgt_bufs.gy, bufs->src_bufs.mask, bufs->tgt_bufs.mask,
 			bufs->src_bufs.gmask, bufs->tgt_bufs.gmask, has_gmask, src.height,
-			src.width, tgt.height, tgt.width, patch_size, BLACK, seed);
+			src.width, tgt.height, tgt.width, patch_size, BLACK,
+			bufs->rng_states);
 	}
 
 	// copy back from device to host

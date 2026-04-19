@@ -1,5 +1,5 @@
 #pragma once
-// #define DEBUG
+#define DEBUG
 
 void cuda_device_sync();
 
@@ -33,8 +33,13 @@ struct DeviceImageBuffers {
 	~DeviceImageBuffers();
 };
 
+struct curandStatePhilox4_32_10;
+typedef struct curandStatePhilox4_32_10 curandStatePhilox4_32_10_t;
+
 struct CudaNNFDeviceBuffers {
 	int *field_ptr = nullptr;
+	curandStatePhilox4_32_10_t *rng_states = nullptr;
+	int rng_capacity = 0;
 
 	DeviceImageBuffers src_bufs;
 	DeviceImageBuffers tgt_bufs;
@@ -48,6 +53,11 @@ struct CudaNNFDeviceBuffers {
 struct CudaFusedNNFDeviceBuffers {
     int *field_ptr_s2t = nullptr;  // source -> target NNF field
     int *field_ptr_t2s = nullptr;  // target -> source NNF field
+	
+	curandStatePhilox4_32_10_t *rng_states_s2t = nullptr;
+	 curandStatePhilox4_32_10_t *rng_states_t2s = nullptr;
+    int rng_capacity_s2t = 0;
+    int rng_capacity_t2s = 0;
 
     int field_capacity_s2t = 0;
     int field_capacity_t2s = 0;

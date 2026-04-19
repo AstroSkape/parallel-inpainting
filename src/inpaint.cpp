@@ -141,7 +141,7 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 
 	MaskedImage new_source, new_target;
 
-    LOG("level %d, num_iters %d\n", level, nr_iters_em); 
+	LOG("level %d, num_iters %d\n", level, nr_iters_em);
 	for (int iter_em = 0; iter_em < nr_iters_em; ++iter_em) {
 		if (iter_em != 0) {
 			m_source2target.set_target(new_target);
@@ -325,11 +325,11 @@ void Inpainting::_maximization_step(MaskedImage &target, const cv::Mat &vote) {
 	}
 }
 
-// Calls the fused kernel that 
+// Calls the fused kernel that
 // minimizes both the NNFs simulatenously on GPU
 void Inpainting::_fused_minimize_cuda(int nr_pass) {
 	assert(m_gpu_enabled == true);
-	
+
 	// img_a -> s2t's src, t2s's tgt
 	MaskedImage &img_a = m_source2target.mutable_source();
 	MaskedImage &img_b = m_target2source.mutable_target();
@@ -338,35 +338,34 @@ void Inpainting::_fused_minimize_cuda(int nr_pass) {
 	img_b.compute_image_gradients();
 
 	cv::Size a_size = img_a.size();
-    cv::Size b_size = img_b.size();
+	cv::Size b_size = img_b.size();
 
-	bool has_gmask = !img_a.global_mask().empty() && !img_b.global_mask().empty();
+	bool has_gmask =
+		!img_a.global_mask().empty() && !img_b.global_mask().empty();
 
 	HostImageBuffers a_bufs{
-        img_a.image().ptr<unsigned char>(0, 0),
-        img_a.gradx().ptr<unsigned char>(0, 0),
-        img_a.grady().ptr<unsigned char>(0, 0),
-        img_a.mask().ptr<unsigned char>(0, 0),
-        has_gmask ? img_a.global_mask().ptr<unsigned char>(0, 0) : nullptr,
-        a_size.height, a_size.width,
-    };
+		img_a.image().ptr<unsigned char>(0, 0),
+		img_a.gradx().ptr<unsigned char>(0, 0),
+		img_a.grady().ptr<unsigned char>(0, 0),
+		img_a.mask().ptr<unsigned char>(0, 0),
+		has_gmask ? img_a.global_mask().ptr<unsigned char>(0, 0) : nullptr,
+		a_size.height,
+		a_size.width,
+	};
 
 	HostImageBuffers b_bufs{
-        img_b.image().ptr<unsigned char>(0, 0),
-        img_b.gradx().ptr<unsigned char>(0, 0),
-        img_b.grady().ptr<unsigned char>(0, 0),
-        img_b.mask().ptr<unsigned char>(0, 0),
-        has_gmask ? img_b.global_mask().ptr<unsigned char>(0, 0) : nullptr,
-        b_size.height, b_size.width,
-    };
+		img_b.image().ptr<unsigned char>(0, 0),
+		img_b.gradx().ptr<unsigned char>(0, 0),
+		img_b.grady().ptr<unsigned char>(0, 0),
+		img_b.mask().ptr<unsigned char>(0, 0),
+		has_gmask ? img_b.global_mask().ptr<unsigned char>(0, 0) : nullptr,
+		b_size.height,
+		b_size.width,
+	};
 
 	launch_fused_nnf_minimize(
-        &m_cuda_fused_buffers,
-        m_source2target.mutable_field().ptr<int>(0, 0),
-        m_target2source.mutable_field().ptr<int>(0, 0),
-        a_bufs, b_bufs,
-        has_gmask,
-        m_distance_metric->patch_size(),
-        nr_pass,
-        (unsigned int)rand());
+		&m_cuda_fused_buffers, m_source2target.mutable_field().ptr<int>(0, 0),
+		m_target2source.mutable_field().ptr<int>(0, 0), a_bufs, b_bufs,
+		has_gmask, m_distance_metric->patch_size(), nr_pass,
+		(unsigned int)rand());
 }

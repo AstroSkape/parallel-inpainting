@@ -1,5 +1,5 @@
 #include "../include/cuda_helpers.cuh"
-#include "../include/nnf.h"
+#include "../include/cuda_helpers.h"
 #include <cuda_runtime.h>
 #include <iostream>
 
@@ -35,7 +35,7 @@ void realloc_device_ptr(unsigned char **ptr, int new_bytes) {
 /**
  * Allocates space only if needed. Max sized buffers are retained
  */
-void CudaImageDeviceBuffers::allocate_buffers(int num_pixels, bool has_gmask) {
+void DeviceImageBuffers::allocate_buffers(int num_pixels, bool has_gmask) {
 	int prev_capacity_3c = pixel_capacity * 3;
 	int new_capacity_3c = num_pixels * 3;
 
@@ -70,7 +70,7 @@ void CudaNNFDeviceBuffers::allocate_device_buffers(int src_pixels,
 	tgt_bufs.allocate_buffers(tgt_pixels, need_gmask);
 }
 
-CudaImageDeviceBuffers::~CudaImageDeviceBuffers() {
+DeviceImageBuffers::~DeviceImageBuffers() {
 	if (img) {
 		cudaCheckError(cudaFree(img));
 		cudaCheckError(cudaFree(gx));
@@ -243,43 +243,39 @@ __global__ void nnf_minimize_kernel(
 	nnf_field[2] = nnf_best_d;
 }
 
-extern "C" void launch_nnf_minimize(
-	CudaNNFDeviceBuffers *bufs, int *field_ptr, const unsigned char *src_img,
-	const unsigned char *tgt_img, const unsigned char *src_gx,
-	const unsigned char *src_gy, const unsigned char *tgt_gx,
-	const unsigned char *tgt_gy, const unsigned char *src_mask,
-	const unsigned char *tgt_mask, const unsigned char *src_gmask,
-	const unsigned char *tgt_gmask, bool has_gmask, int src_height,
-	int src_width, int tgt_height, int tgt_width, int patch_size, int nr_pass,
-	unsigned int random_seed) {
+extern "C" void launch_nnf_minimize(CudaNNFDeviceBuffers *bufs, int *field_ptr,
+									const HostImageBuffers &src,
+									const HostImageBuffers &tgt, bool has_gmask,
+									int patch_size, int nr_pass,
+									unsigned int random_seed) {
 
-	int src_size = src_height * src_width;
-	int tgt_size = tgt_height * tgt_width;
+	int src_size = src.height * src.width;
+	int tgt_size = tgt.height * tgt.width;
 
 	// copy from host to device
 	cudaCheckError(cudaMemcpy(bufs->field_ptr, field_ptr,
 							  src_size * 3 * sizeof(int),
 							  cudaMemcpyHostToDevice));
-	cudaCheckError(cudaMemcpy(bufs->src_bufs.img, src_img, src_size * 3,
+	cudaCheckError(cudaMemcpy(bufs->src_bufs.img, src.img, src_size * 3,
 							  cudaMemcpyHostToDevice));
-	cudaCheckError(cudaMemcpy(bufs->tgt_bufs.img, tgt_img, tgt_size * 3,
+	cudaCheckError(cudaMemcpy(bufs->tgt_bufs.img, tgt.img, tgt_size * 3,
 							  cudaMemcpyHostToDevice));
-	cudaCheckError(cudaMemcpy(bufs->src_bufs.gx, src_gx, src_size * 3,
+	cudaCheckError(cudaMemcpy(bufs->src_bufs.gx, src.gx, src_size * 3,
 							  cudaMemcpyHostToDevice));
-	cudaCheckError(cudaMemcpy(bufs->src_bufs.gy, src_gy, src_size * 3,
+	cudaCheckError(cudaMemcpy(bufs->src_bufs.gy, src.gy, src_size * 3,
 							  cudaMemcpyHostToDevice));
-	cudaCheckError(cudaMemcpy(bufs->tgt_bufs.gx, tgt_gx, tgt_size * 3,
+	cudaCheckError(cudaMemcpy(bufs->tgt_bufs.gx, tgt.gx, tgt_size * 3,
 							  cudaMemcpyHostToDevice));
-	cudaCheckError(cudaMemcpy(bufs->tgt_bufs.gy, tgt_gy, tgt_size * 3,
+	cudaCheckError(cudaMemcpy(bufs->tgt_bufs.gy, tgt.gy, tgt_size * 3,
 							  cudaMemcpyHostToDevice));
-	cudaCheckError(cudaMemcpy(bufs->src_bufs.mask, src_mask, src_size,
+	cudaCheckError(cudaMemcpy(bufs->src_bufs.mask, src.mask, src_size,
 							  cudaMemcpyHostToDevice));
-	cudaCheckError(cudaMemcpy(bufs->tgt_bufs.mask, tgt_mask, tgt_size,
+	cudaCheckError(cudaMemcpy(bufs->tgt_bufs.mask, tgt.mask, tgt_size,
 							  cudaMemcpyHostToDevice));
 	if (has_gmask) {
-		cudaCheckError(cudaMemcpy(bufs->src_bufs.gmask, src_gmask, src_size,
+		cudaCheckError(cudaMemcpy(bufs->src_bufs.gmask, src.gmask, src_size,
 								  cudaMemcpyHostToDevice));
-		cudaCheckError(cudaMemcpy(bufs->tgt_bufs.gmask, tgt_gmask, tgt_size,
+		cudaCheckError(cudaMemcpy(bufs->tgt_bufs.gmask, tgt.gmask, tgt_size,
 								  cudaMemcpyHostToDevice));
 	}
 
@@ -296,15 +292,15 @@ extern "C" void launch_nnf_minimize(
 			bufs->field_ptr, bufs->src_bufs.img, bufs->tgt_bufs.img,
 			bufs->src_bufs.gx, bufs->src_bufs.gy, bufs->tgt_bufs.gx,
 			bufs->tgt_bufs.gy, bufs->src_bufs.mask, bufs->tgt_bufs.mask,
-			bufs->src_bufs.gmask, bufs->tgt_bufs.gmask, has_gmask, src_height,
-			src_width, tgt_height, tgt_width, patch_size, RED, seed);
+			bufs->src_bufs.gmask, bufs->tgt_bufs.gmask, has_gmask, src.height,
+			src.width, tgt.height, tgt.width, patch_size, RED, seed);
 		// call kernel on black pixels
 		nnf_minimize_kernel<<<blocks, num_threads>>>(
 			bufs->field_ptr, bufs->src_bufs.img, bufs->tgt_bufs.img,
 			bufs->src_bufs.gx, bufs->src_bufs.gy, bufs->tgt_bufs.gx,
 			bufs->tgt_bufs.gy, bufs->src_bufs.mask, bufs->tgt_bufs.mask,
-			bufs->src_bufs.gmask, bufs->tgt_bufs.gmask, has_gmask, src_height,
-			src_width, tgt_height, tgt_width, patch_size, BLACK, seed);
+			bufs->src_bufs.gmask, bufs->tgt_bufs.gmask, has_gmask, src.height,
+			src.width, tgt.height, tgt.width, patch_size, BLACK, seed);
 	}
 
 	// copy back from device to host

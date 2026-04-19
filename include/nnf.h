@@ -1,33 +1,9 @@
+#pragma once
 #include "masked_image.h"
 #include <opencv2/core.hpp>
+#include "cuda_helpers.h"
 
 bool checkGpuCandidacy(cv::Size size);
-
-struct CudaImageDeviceBuffers {
-	unsigned char *img = nullptr;
-	unsigned char *gx = nullptr;
-	unsigned char *gy = nullptr;
-	unsigned char *mask = nullptr;
-	unsigned char *gmask = nullptr;
-
-	int pixel_capacity = 0;
-	
-	void allocate_buffers(int pixels, bool has_gmask);
-
-	~CudaImageDeviceBuffers();
-};
-
-struct CudaNNFDeviceBuffers {
-	int *field_ptr = nullptr;
-
-	CudaImageDeviceBuffers src_bufs;
-	CudaImageDeviceBuffers tgt_bufs;
-	bool gmask_allocated = false;
-
-	void allocate_device_buffers(int src_pixels, int tgt_pixels, bool need_gmask);
-
-	~CudaNNFDeviceBuffers();
-};
 
 class PatchDistanceMetric {
   public:
@@ -66,6 +42,9 @@ class NearestNeighborField {
 	const MaskedImage &target() const { return m_target; }
 	inline cv::Size source_size() const { return m_source.size(); }
 	inline cv::Size target_size() const { return m_target.size(); }
+	inline cv::Mat &mutable_field() { return m_field; }
+	inline MaskedImage &mutable_source() { return m_source; }
+	inline MaskedImage &mutable_target() { return m_target; }
 	inline void set_source(const MaskedImage &source) { m_source = source; }
 	inline void set_target(const MaskedImage &target) { m_target = target; }
 

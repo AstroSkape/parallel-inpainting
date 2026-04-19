@@ -2,12 +2,6 @@
 #include "../include/nnf.h"
 #include "../include/cuda_helpers.h"
 
-extern "C" void launch_nnf_minimize(CudaNNFDeviceBuffers *bufs, int *field_ptr,
-									const HostImageBuffers &src,
-									const HostImageBuffers &tgt, bool has_gmask,
-									int patch_size, int nr_pass,
-									unsigned int random_seed);
-
 void NearestNeighborField::minimize_cuda(int nr_pass,
 										 CudaNNFDeviceBuffers *bufs) {
 	m_source.compute_image_gradients();

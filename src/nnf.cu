@@ -6,6 +6,9 @@
 #define RED 0
 #define BLACK 1
 
+#define DIR_S2T 0 // source -> target: src=A, tgt=B, writes field_s2t
+#define DIR_T2S 1 // target -> source: src=B, tgt=A, writes field_t2s
+
 // Wang hash
 // Code adapted from https://burtleburtle.net/bob/hash/integer.html
 __device__ unsigned int wang_hash(unsigned int a) {
@@ -70,6 +73,29 @@ void CudaNNFDeviceBuffers::allocate_device_buffers(int src_pixels,
 	tgt_bufs.allocate_buffers(tgt_pixels, need_gmask);
 }
 
+void CudaFusedNNFDeviceBuffers::allocate_device_buffers(int a_pixels,
+														int b_pixels,
+														bool need_gmask) {
+	// s2t field: sized to img_a (s2t's source).
+	if (a_pixels > field_capacity_s2t) {
+		if (field_ptr_s2t)
+			cudaCheckError(cudaFree(field_ptr_s2t));
+		cudaCheckError(cudaMalloc(&field_ptr_s2t, a_pixels * 3 * sizeof(int)));
+		field_capacity_s2t = a_pixels;
+	}
+
+	// t2s field: sized to img_b (t2s's source).
+	if (b_pixels > field_capacity_t2s) {
+		if (field_ptr_t2s)
+			cudaCheckError(cudaFree(field_ptr_t2s));
+		cudaCheckError(cudaMalloc(&field_ptr_t2s, b_pixels * 3 * sizeof(int)));
+		field_capacity_t2s = b_pixels;
+	}
+
+	a_bufs.allocate_buffers(a_pixels, need_gmask);
+	b_bufs.allocate_buffers(b_pixels, need_gmask);
+}
+
 DeviceImageBuffers::~DeviceImageBuffers() {
 	if (img) {
 		cudaCheckError(cudaFree(img));
@@ -79,6 +105,13 @@ DeviceImageBuffers::~DeviceImageBuffers() {
 	}
 	if (gmask)
 		cudaCheckError(cudaFree(gmask));
+}
+
+CudaFusedNNFDeviceBuffers::~CudaFusedNNFDeviceBuffers() {
+	if (field_ptr_s2t)
+		cudaCheckError(cudaFree(field_ptr_s2t));
+	if (field_ptr_t2s)
+		cudaCheckError(cudaFree(field_ptr_t2s));
 }
 
 CudaNNFDeviceBuffers::~CudaNNFDeviceBuffers() {
@@ -241,6 +274,229 @@ __global__ void nnf_minimize_kernel(
 	nnf_field[0] = nnf_best_y;
 	nnf_field[1] = nnf_best_x;
 	nnf_field[2] = nnf_best_d;
+}
+
+/**
+ * Fused Kernel
+ *
+ * Grid Layout:
+ * 	gridDim.x = ceil(max(a_pixels, b_pixels) / blockDim.x)
+ * 	gridDim.y = 2 (0 = s2t, 1 = t2s)
+ */
+__global__ void nnf_minimize_fused_kernel(
+	int *field_s2t, int *field_t2s,
+	// Image A (= s2t's source, = t2s's target)
+	const unsigned char *a_img, const unsigned char *a_gx,
+	const unsigned char *a_gy, const unsigned char *a_mask,
+	const unsigned char *a_gmask,
+	// Image B (= s2t's target, = t2s's source)
+	const unsigned char *b_img, const unsigned char *b_gx,
+	const unsigned char *b_gy, const unsigned char *b_mask,
+	const unsigned char *b_gmask, bool has_gmask, int a_h, int a_w, int b_h,
+	int b_w, int patch_size, int color, unsigned int seed) {
+
+	const int dir = blockIdx.y; // 0 or 1
+
+	int *field;
+	const unsigned char *src_img, *src_gx, *src_gy, *src_mask, *src_gmask;
+	const unsigned char *tgt_img, *tgt_gx, *tgt_gy, *tgt_mask, *tgt_gmask;
+	int src_h, src_w, tgt_h, tgt_w;
+
+	if (dir == DIR_S2T) {
+		field = field_s2t;
+		src_img = a_img;
+		src_gx = a_gx;
+		src_gy = a_gy;
+		src_mask = a_mask;
+		src_gmask = a_gmask;
+		tgt_img = b_img;
+		tgt_gx = b_gx;
+		tgt_gy = b_gy;
+		tgt_mask = b_mask;
+		tgt_gmask = b_gmask;
+		src_h = a_h;
+		src_w = a_w;
+		tgt_h = b_h;
+		tgt_w = b_w;
+	} else {
+		field = field_t2s;
+		src_img = b_img;
+		src_gx = b_gx;
+		src_gy = b_gy;
+		src_mask = b_mask;
+		src_gmask = b_gmask;
+		tgt_img = a_img;
+		tgt_gx = a_gx;
+		tgt_gy = a_gy;
+		tgt_mask = a_mask;
+		tgt_gmask = a_gmask;
+		src_h = b_h;
+		src_w = b_w;
+		tgt_h = a_h;
+		tgt_w = a_w;
+	}
+
+	const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+	const int src_size = src_h * src_w;
+	if (idx >= src_size)
+		return;
+
+	const int p_y = idx / src_w;
+	const int p_x = idx % src_w;
+
+	// even sum coords - red
+	// odd sum coords - black
+	if ((p_x + p_y) % 2 != color)
+		return;
+
+	int *nnf_field = field + idx * 3;
+	int nnf_best_y = nnf_field[0];
+	int nnf_best_x = nnf_field[1];
+	int nnf_best_d = nnf_field[2];
+
+	const int directions[4][2] = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
+
+	// propagation phase
+	for (int i = 0; i < 4; i++) {
+		int newy = p_y + directions[i][0];
+		int newx = p_x + directions[i][1];
+
+		if (newy < 0 || newy >= src_h || newx < 0 || newx >= src_w)
+			continue;
+		if (has_gmask && src_gmask[newy * src_w + newx])
+			continue;
+
+		const int *neighbor_field = field + (newy * src_w + newx) * 3;
+		int clamped_y =
+			device_clamp(neighbor_field[0] - directions[i][0], 0, tgt_h - 1);
+		int clamped_x =
+			device_clamp(neighbor_field[1] - directions[i][1], 0, tgt_w - 1);
+
+		int computed_dist = compute_patch_dist(
+			src_img, tgt_img, src_gx, src_gy, tgt_gx, tgt_gy, src_mask,
+			tgt_mask, src_gmask, tgt_gmask, has_gmask, p_y, p_x, clamped_y,
+			clamped_x, src_h, src_w, tgt_h, tgt_w, patch_size);
+		if (computed_dist < nnf_best_d) {
+			nnf_best_x = newx;
+			nnf_best_y = newy;
+			nnf_best_d = computed_dist;
+		}
+	}
+
+	// random search phase
+	// a different seed depending on direction
+	const unsigned int dir_seed = seed + (dir == DIR_S2T ? 0u : 0x9E3779B9u);
+
+	int random_scale = (min(tgt_h, tgt_w) - 1) / 2;
+	int step = 0;
+
+	while (random_scale > 0) {
+		int yp = device_clamp(
+			nnf_best_y + rand_range(dir_seed + idx * 1337u + step * 7919u,
+									-random_scale, random_scale),
+			0, tgt_h - 1);
+		int xp = device_clamp(
+			nnf_best_x + rand_range(dir_seed + idx * 1337u + step * 7919u,
+									-random_scale, random_scale),
+			0, tgt_w - 1);
+
+		if (has_gmask && tgt_gmask[yp * tgt_w + xp]) {
+			random_scale /= 2;
+		}
+
+		int dp = compute_patch_dist(src_img, tgt_img, src_gx, src_gy, tgt_gx,
+									tgt_gy, src_mask, tgt_mask, src_gmask,
+									tgt_gmask, has_gmask, p_y, p_x, yp, xp,
+									src_h, src_w, tgt_h, tgt_w, patch_size);
+		if (dp < nnf_best_d) {
+			nnf_best_x = xp;
+			nnf_best_y = yp;
+			nnf_best_d = dp;
+		}
+		random_scale /= 2;
+		step++;
+	}
+
+	nnf_field[0] = nnf_best_y;
+    nnf_field[1] = nnf_best_x;
+    nnf_field[2] = nnf_best_d;
+}
+
+extern "C" void launch_fused_nnf_minimize(
+	CudaFusedNNFDeviceBuffers *bufs, int *field_s2t_host, int *field_t2s_host,
+	const HostImageBuffers &a, // s2t's source, t2s's target
+	const HostImageBuffers &b, // s2t's target, t2s's source
+	bool has_gmask, int patch_size, int nr_pass, unsigned int random_seed) {
+	const int a_size = a.height * a.width;
+	const int b_size = b.height * b.width;
+
+	// copy from host to device
+	cudaCheckError(cudaMemcpy(bufs->field_ptr_s2t, field_s2t_host,
+							  a_size * 3 * sizeof(int),
+							  cudaMemcpyHostToDevice));
+	cudaCheckError(cudaMemcpy(bufs->field_ptr_t2s, field_t2s_host,
+							  b_size * 3 * sizeof(int),
+							  cudaMemcpyHostToDevice));
+	cudaCheckError(cudaMemcpy(bufs->a_bufs.img, a.img, a_size * 3,
+							  cudaMemcpyHostToDevice));
+	cudaCheckError(
+		cudaMemcpy(bufs->a_bufs.gx, a.gx, a_size * 3, cudaMemcpyHostToDevice));
+	cudaCheckError(
+		cudaMemcpy(bufs->a_bufs.gy, a.gy, a_size * 3, cudaMemcpyHostToDevice));
+	cudaCheckError(
+		cudaMemcpy(bufs->a_bufs.mask, a.mask, a_size, cudaMemcpyHostToDevice));
+
+	cudaCheckError(cudaMemcpy(bufs->b_bufs.img, b.img, b_size * 3,
+							  cudaMemcpyHostToDevice));
+	cudaCheckError(
+		cudaMemcpy(bufs->b_bufs.gx, b.gx, b_size * 3, cudaMemcpyHostToDevice));
+	cudaCheckError(
+		cudaMemcpy(bufs->b_bufs.gy, b.gy, b_size * 3, cudaMemcpyHostToDevice));
+	cudaCheckError(
+		cudaMemcpy(bufs->b_bufs.mask, b.mask, b_size, cudaMemcpyHostToDevice));
+	if (has_gmask) {
+		cudaCheckError(cudaMemcpy(bufs->a_bufs.gmask, a.gmask, a_size,
+								  cudaMemcpyHostToDevice));
+		cudaCheckError(cudaMemcpy(bufs->b_bufs.gmask, b.gmask, b_size,
+								  cudaMemcpyHostToDevice));
+	}
+
+	const int num_threads = 256;
+	const int max_size = (a_size > b_size) ? a_size : b_size;
+	const int blocks_x = (max_size + num_threads - 1) / num_threads;
+
+	dim3 grid(blocks_x, 2);
+	dim3 block(num_threads);
+
+	LOG("[CUDA-FUSED] grid=(%d,2) block=%d\n", blocks_x, num_threads);
+
+	for (int i = 0; i < nr_pass; i++) {
+		unsigned int seed = random_seed + i * 12345u;
+
+		// Red phase: both directions together.
+		nnf_minimize_fused_kernel<<<grid, block>>>(
+			bufs->field_ptr_s2t, bufs->field_ptr_t2s, bufs->a_bufs.img,
+			bufs->a_bufs.gx, bufs->a_bufs.gy, bufs->a_bufs.mask,
+			bufs->a_bufs.gmask, bufs->b_bufs.img, bufs->b_bufs.gx,
+			bufs->b_bufs.gy, bufs->b_bufs.mask, bufs->b_bufs.gmask, has_gmask,
+			a.height, a.width, b.height, b.width, patch_size, RED, seed);
+
+		// Black phase: both directions together.
+		nnf_minimize_fused_kernel<<<grid, block>>>(
+			bufs->field_ptr_s2t, bufs->field_ptr_t2s, bufs->a_bufs.img,
+			bufs->a_bufs.gx, bufs->a_bufs.gy, bufs->a_bufs.mask,
+			bufs->a_bufs.gmask, bufs->b_bufs.img, bufs->b_bufs.gx,
+			bufs->b_bufs.gy, bufs->b_bufs.mask, bufs->b_bufs.gmask, has_gmask,
+			a.height, a.width, b.height, b.width, patch_size, BLACK, seed);
+	}
+
+	// --- D2H copies ---------------------------------------------------------
+	cudaCheckError(cudaMemcpy(field_s2t_host, bufs->field_ptr_s2t,
+							  a_size * 3 * sizeof(int),
+							  cudaMemcpyDeviceToHost));
+	cudaCheckError(cudaMemcpy(field_t2s_host, bufs->field_ptr_t2s,
+							  b_size * 3 * sizeof(int),
+							  cudaMemcpyDeviceToHost));
 }
 
 extern "C" void launch_nnf_minimize(CudaNNFDeviceBuffers *bufs, int *field_ptr,

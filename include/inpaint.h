@@ -20,6 +20,8 @@ class Inpainting {
 						   bool upscaled);
 	void _maximization_step(MaskedImage &target, const cv::Mat &vote);
 
+	void _fused_minimize_cuda(int nr_pass);
+
 	MaskedImage m_initial;
 	std::vector<MaskedImage> m_pyramid;
 
@@ -28,4 +30,5 @@ class Inpainting {
 	const PatchDistanceMetric *m_distance_metric;
 	bool m_gpu_enabled;
 	CudaNNFDeviceBuffers m_cuda_buffers;
+	CudaFusedNNFDeviceBuffers m_cuda_fused_buffers;
 };

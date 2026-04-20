@@ -410,7 +410,7 @@ extern "C" void launch_nnf_minimize(CudaNNFDeviceBuffers *bufs, int *field_ptr,
     cudaEventElapsedTime(&h2d_ms, t0, t1);
     cudaEventElapsedTime(&kernel_ms, t1, t2);
     cudaEventElapsedTime(&d2h_ms, t2, t3);
-    printf("[TIMING] h2d=%.2fms kernel=%.2fms d2h=%.2fms total=%.2fms\n",
+    LOG("[TIMING] h2d=%.2fms kernel=%.2fms d2h=%.2fms total=%.2fms\n",
            h2d_ms, kernel_ms, d2h_ms, h2d_ms + kernel_ms + d2h_ms);
 
     cudaEventDestroy(t0);

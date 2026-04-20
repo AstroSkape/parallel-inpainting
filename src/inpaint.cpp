@@ -2,11 +2,14 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
+#include "../include/CycleTimer.h"
 #include "../include/cuda_helpers.h"
 #include "../include/inpaint.h"
-#include "../include/CycleTimer.h"
 #include "masked_image.h"
 #include <iostream>
+
+#include <omp.h>
+#include <vector>
 
 namespace {
 // lookup table that converts patch distance to similarity
@@ -72,11 +75,11 @@ Inpainting::Inpainting(cv::Mat image, cv::Mat mask, cv::Mat global_mask,
 void Inpainting::_initialize_pyramid() {
 	MaskedImage source = m_initial;
 	m_pyramid.push_back(source);
-	// while (source.size().height > m_distance_metric->patch_size() &&
-	// 	   source.size().width > m_distance_metric->patch_size()) {
-	// 	source = source.downsample();
-	// 	m_pyramid.push_back(source);
-	// }
+	while (source.size().height > m_distance_metric->patch_size() &&
+		   source.size().width > m_distance_metric->patch_size()) {
+		source = source.downsample();
+		m_pyramid.push_back(source);
+	}
 
 	if (kDistance2Similarity.size() == 0) {
 		init_kDistance2Similarity();
@@ -220,18 +223,20 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 
 		// Completeness - ensures that the output image contains as much
 		// information as possible from the input as possible
-		_expectation_step(m_source2target, 1, vote, new_source, upscaled);
+		_expectation_step(m_source2target, 1, vote, new_source, upscaled,
+						  m_gpu_enabled);
 		if (verbose)
 			std::cout << "  Expectation source to target finished."
 					  << std::endl;
 
 		// Coherence - ensures that the output is coherent wrt the input and
 		// that new visual structures are penalised
-		_expectation_step(m_target2source, 0, vote, new_source, upscaled);
+		_expectation_step(m_target2source, 0, vote, new_source, upscaled,
+						  m_gpu_enabled);
 		if (verbose)
 			std::cout << "  Expectation target to source finished."
 					  << std::endl;
-		
+
 		double t_after_estep = CycleTimer::currentSeconds();
 
 		// M step - Compile votes (averaged) and update pixel values.
@@ -240,7 +245,11 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 			std::cout << "  Minimization step finished." << std::endl;
 
 		double t_after_em = CycleTimer::currentSeconds();
-		LOG("[EM level=%d iter=%d] nnf=%.3fs upscaling=%.3fs expectation=%.3fs maximization=%.3fs\n", level, iter_em, t_after_nnf_minimize - t_start, t_after_upscaling - t_after_nnf_minimize, t_after_estep - t_after_upscaling, t_after_em - t_after_estep);
+		LOG("[EM level=%d iter=%d] nnf=%.3fs upscaling=%.3fs expectation=%.3fs "
+			"maximization=%.3fs\n",
+			level, iter_em, t_after_nnf_minimize - t_start,
+			t_after_upscaling - t_after_nnf_minimize,
+			t_after_estep - t_after_upscaling, t_after_em - t_after_estep);
 	}
 
 	return new_target;
@@ -250,50 +259,84 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 // Patch voting
 void Inpainting::_expectation_step(const NearestNeighborField &nnf,
 								   bool source2target, cv::Mat &vote,
-								   const MaskedImage &source, bool upscaled) {
+								   const MaskedImage &source, bool upscaled,
+								   bool is_parallel) {
 	auto source_size = nnf.source_size();
 	auto target_size = nnf.target_size();
 	const int patch_size = m_distance_metric->patch_size();
 
-	for (int i = 0; i < source_size.height; ++i) {
-		for (int j = 0; j < source_size.width; ++j) {
-			if (nnf.source().is_globally_masked(i, j))
-				continue;
-			int yp = nnf.at(i, j, 0), xp = nnf.at(i, j, 1),
-				dp = nnf.at(i, j, 2);
-			double w = kDistance2Similarity[dp];
+	int thr_count = is_parallel ? omp_get_max_threads() : 1;
+	LOG("thread count: %d\n", thr_count);
 
-			for (int di = -patch_size; di <= patch_size; ++di) {
-				for (int dj = -patch_size; dj <= patch_size; ++dj) {
-					int ys = i + di, xs = j + dj, yt = yp + di, xt = xp + dj;
-					if (!(ys >= 0 && ys < source_size.height && xs >= 0 &&
-						  xs < source_size.width))
-						continue;
-					if (nnf.source().is_globally_masked(ys, xs))
-						continue;
-					if (!(yt >= 0 && yt < target_size.height && xt >= 0 &&
-						  xt < target_size.width))
-						continue;
-					if (nnf.target().is_globally_masked(yt, xt))
-						continue;
+	std::vector<cv::Mat> local_votes(thr_count);
+	for (int t = 0; t < thr_count; ++t) {
+		local_votes[t] = cv::Mat::zeros(vote.size(), vote.type());
+	}
 
-					if (!source2target) {
-						std::swap(ys, yt);
-						std::swap(xs, xt);
-					}
+#pragma omp parallel num_threads(thr_count)
+	{
+		int tid = omp_get_thread_num();
+		auto local_vote = local_votes[tid];
 
-					if (upscaled) {
-						for (int uy = 0; uy < 2; ++uy) {
-							for (int ux = 0; ux < 2; ++ux) {
-								_weighted_copy(source, 2 * ys + uy, 2 * xs + ux,
-											   vote, 2 * yt + uy, 2 * xt + ux,
-											   w);
-							}
+		#pragma omp for collapse(2) schedule(static)
+		for (int i = 0; i < source_size.height; ++i) {
+			for (int j = 0; j < source_size.width; ++j) {
+				if (nnf.source().is_globally_masked(i, j))
+					continue;
+				int yp = nnf.at(i, j, 0), xp = nnf.at(i, j, 1),
+					dp = nnf.at(i, j, 2);
+				double w = kDistance2Similarity[dp];
+
+				for (int di = -patch_size; di <= patch_size; ++di) {
+					for (int dj = -patch_size; dj <= patch_size; ++dj) {
+						int ys = i + di, xs = j + dj, yt = yp + di,
+							xt = xp + dj;
+						if (!(ys >= 0 && ys < source_size.height && xs >= 0 &&
+							  xs < source_size.width))
+							continue;
+						if (nnf.source().is_globally_masked(ys, xs))
+							continue;
+						if (!(yt >= 0 && yt < target_size.height && xt >= 0 &&
+							  xt < target_size.width))
+							continue;
+						if (nnf.target().is_globally_masked(yt, xt))
+							continue;
+
+						if (!source2target) {
+							std::swap(ys, yt);
+							std::swap(xs, xt);
 						}
-					} else {
-						_weighted_copy(source, ys, xs, vote, yt, xt, w);
+
+						if (upscaled) {
+							for (int uy = 0; uy < 2; ++uy) {
+								for (int ux = 0; ux < 2; ++ux) {
+									_weighted_copy(source, 2 * ys + uy,
+												   2 * xs + ux, local_vote,
+												   2 * yt + uy, 2 * xt + ux, w);
+								}
+							}
+						} else {
+							_weighted_copy(source, ys, xs, local_vote, yt, xt,
+										   w);
+						}
 					}
 				}
+			}
+		}
+	}
+
+	vote.setTo(cv::Scalar::all(0));
+
+	#pragma omp parallel for collapse(2) schedule(static) num_threads(thr_count)
+	for (int y = 0; y < vote.rows; ++y) {
+		for (int x = 0; x < vote.cols; ++x) {
+			double *dst = vote.ptr<double>(y, x);
+			for (int t = 0; t < thr_count; ++t) {
+				const double *src = local_votes[t].ptr<double>(y, x);
+				dst[0] += src[0];
+				dst[1] += src[1];
+				dst[2] += src[2];
+				dst[3] += src[3];
 			}
 		}
 	}

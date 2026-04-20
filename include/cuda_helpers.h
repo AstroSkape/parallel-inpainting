@@ -1,5 +1,5 @@
 #pragma once
-#define DEBUG
+// #define DEBUG
 
 void cuda_device_sync();
 

@@ -17,7 +17,7 @@ class Inpainting {
 										  bool verbose);
 	void _expectation_step(const NearestNeighborField &nnf, bool source2target,
 						   cv::Mat &vote, const MaskedImage &source,
-						   bool upscaled);
+						   bool upscaled, bool is_parallel);
 	void _maximization_step(MaskedImage &target, const cv::Mat &vote);
 
 	MaskedImage m_initial;

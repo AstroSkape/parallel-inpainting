@@ -210,6 +210,8 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 			new_target = target.clone();
 		}
 
+		double t_after_upscaling = CycleTimer::currentSeconds();
+
 		auto vote = cv::Mat(new_target.size(), CV_64FC4);
 		vote.setTo(cv::Scalar::all(0));
 
@@ -229,6 +231,8 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 		if (verbose)
 			std::cout << "  Expectation target to source finished."
 					  << std::endl;
+		
+		double t_after_estep = CycleTimer::currentSeconds();
 
 		// M step - Compile votes (averaged) and update pixel values.
 		_maximization_step(new_target, vote);
@@ -236,7 +240,7 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 			std::cout << "  Minimization step finished." << std::endl;
 
 		double t_after_em = CycleTimer::currentSeconds();
-		LOG("[EM level=%d iter=%d] nnf=%.3fs em=%.3fs\n", level, iter_em, t_after_nnf_minimize - t_start, t_after_em - t_after_nnf_minimize);
+		LOG("[EM level=%d iter=%d] nnf=%.3fs upscaling=%.3fs expectation=%.3fs maximization=%.3fs\n", level, iter_em, t_after_nnf_minimize - t_start, t_after_upscaling - t_after_nnf_minimize, t_after_estep - t_after_upscaling, t_after_em - t_after_estep);
 	}
 
 	return new_target;

@@ -75,11 +75,11 @@ Inpainting::Inpainting(cv::Mat image, cv::Mat mask, cv::Mat global_mask,
 void Inpainting::_initialize_pyramid() {
 	MaskedImage source = m_initial;
 	m_pyramid.push_back(source);
-	// while (source.size().height > m_distance_metric->patch_size() &&
-	// 	   source.size().width > m_distance_metric->patch_size()) {
-	// 	source = source.downsample();
-	// 	m_pyramid.push_back(source);
-	// }
+	while (source.size().height > m_distance_metric->patch_size() &&
+		   source.size().width > m_distance_metric->patch_size()) {
+		source = source.downsample();
+		m_pyramid.push_back(source);
+	}
 
 	if (kDistance2Similarity.size() == 0) {
 		init_kDistance2Similarity();
@@ -188,8 +188,8 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 					tgt_size.height * tgt_size.width,
 					!source.global_mask().empty());
 			}
-			m_source2target.minimize(gpu_nnf_iters, true, &m_cuda_buffers);
-			m_target2source.minimize(gpu_nnf_iters, true, &m_cuda_buffers);
+			m_source2target.minimize(gpu_nnf_iters, true, &m_cuda_buffers, m_cuda_buffers.s2t_curr);
+			m_target2source.minimize(gpu_nnf_iters, true, &m_cuda_buffers, m_cuda_buffers.t2s_curr);
 		} else {
 			m_source2target.minimize(nr_iters_nnf, false);
 			m_target2source.minimize(nr_iters_nnf, false);

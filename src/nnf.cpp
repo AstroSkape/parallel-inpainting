@@ -84,11 +84,11 @@ bool checkGpuCandidacy(cv::Size size) {
 	return blocks > 1;
 }
 
-void NearestNeighborField::minimize(int nr_pass, bool is_gpu_enabled, CudaNNFDeviceBuffers *cuda_bufs) {
+void NearestNeighborField::minimize(int nr_pass, bool is_gpu_enabled, CudaNNFDeviceBuffers *cuda_bufs, int *d_field_ptr) {
 	const auto &this_size = source_size();
 
 	if (is_gpu_enabled) {
-		minimize_cuda(nr_pass, cuda_bufs);
+		minimize_cuda(nr_pass, cuda_bufs, d_field_ptr);
 		return;
 	}
 

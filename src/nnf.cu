@@ -26,10 +26,11 @@ __device__ int device_clamp(int val, int min_val, int max_val) {
 	return min(max_val, max(val, min_val));
 }
 
-void realloc_device_ptr(unsigned char **ptr, int new_bytes) {
-	if (*ptr)
+template <typename T> void realloc_device_ptr(T **ptr, size_t count) {
+	if (*ptr) {
 		cudaCheckError(cudaFree(*ptr));
-	cudaCheckError(cudaMalloc(ptr, new_bytes));
+	}
+	cudaCheckError(cudaMalloc((void **)ptr, count * sizeof(T)));
 }
 
 /**
@@ -53,6 +54,23 @@ void DeviceImageBuffers::allocate_buffers(int num_pixels, bool has_gmask) {
 		pixel_capacity = num_pixels;
 }
 
+void ensure_fields(int required_pixels, int &capacity, int **curr, int **prev) {
+	if (required_pixels > capacity) {
+		size_t count = required_pixels * 3;
+		realloc_device_ptr(curr, count);
+		realloc_device_ptr(prev, count);
+		capacity = required_pixels;
+	}
+}
+
+void CudaNNFDeviceBuffers::ensure_s2t_fields(int src_pixels) {
+	ensure_fields(src_pixels, s2t_capacity, &s2t_curr, &s2t_prev);
+}
+
+void CudaNNFDeviceBuffers::ensure_t2s_fields(int tgt_pixels) {
+	ensure_fields(tgt_pixels, t2s_capacity, &t2s_curr, &t2s_prev);
+}
+
 /**
  * Ensures that the buffers can hold the required number of pixels.
  * Reuses existing buffers to avoid repeated calls to malloc/free
@@ -60,14 +78,16 @@ void DeviceImageBuffers::allocate_buffers(int num_pixels, bool has_gmask) {
 void CudaNNFDeviceBuffers::allocate_device_buffers(int src_pixels,
 												   int tgt_pixels,
 												   bool need_gmask) {
-	if (src_pixels > src_bufs.pixel_capacity) {
-		if (field_ptr)
-			cudaCheckError(cudaFree(field_ptr));
-		cudaCheckError(cudaMalloc(&field_ptr, src_pixels * 3 * sizeof(int)));
-	}
+	// if (src_pixels > src_bufs.pixel_capacity) {
+	// 	if (field_ptr)
+	// 		cudaCheckError(cudaFree(field_ptr));
+	// 	cudaCheckError(cudaMalloc(&field_ptr, src_pixels * 3 * sizeof(int)));
+	// }
 
 	src_bufs.allocate_buffers(src_pixels, need_gmask);
 	tgt_bufs.allocate_buffers(tgt_pixels, need_gmask);
+	ensure_s2t_fields(src_pixels);
+	ensure_t2s_fields(tgt_pixels);
 }
 
 DeviceImageBuffers::~DeviceImageBuffers() {
@@ -82,9 +102,14 @@ DeviceImageBuffers::~DeviceImageBuffers() {
 }
 
 CudaNNFDeviceBuffers::~CudaNNFDeviceBuffers() {
-	if (field_ptr) {
-		cudaCheckError(cudaFree(field_ptr));
-	}
+	if (s2t_curr)
+		cudaCheckError(cudaFree(s2t_curr));
+	if (s2t_prev)
+		cudaCheckError(cudaFree(s2t_prev));
+	if (t2s_curr)
+		cudaCheckError(cudaFree(t2s_curr));
+	if (t2s_prev)
+		cudaCheckError(cudaFree(t2s_prev));
 }
 
 __device__ int
@@ -333,7 +358,8 @@ __global__ void nnf_minimize_kernel(
 	nnf_field[2] = nnf_best_d;
 }
 
-extern "C" void launch_nnf_minimize(CudaNNFDeviceBuffers *bufs, int *field_ptr,
+extern "C" void launch_nnf_minimize(CudaNNFDeviceBuffers *bufs,
+									int *d_field_ptr, int *h_field_ptr,
 									const HostImageBuffers &src,
 									const HostImageBuffers &tgt, bool has_gmask,
 									int patch_size, int nr_pass,
@@ -343,16 +369,16 @@ extern "C" void launch_nnf_minimize(CudaNNFDeviceBuffers *bufs, int *field_ptr,
 	int tgt_size = tgt.height * tgt.width;
 
 	// Timing setup
-    cudaEvent_t t0, t1, t2, t3;
-    cudaEventCreate(&t0);
-    cudaEventCreate(&t1);
-    cudaEventCreate(&t2);
-    cudaEventCreate(&t3);
+	cudaEvent_t t0, t1, t2, t3;
+	cudaEventCreate(&t0);
+	cudaEventCreate(&t1);
+	cudaEventCreate(&t2);
+	cudaEventCreate(&t3);
 
 	cudaEventRecord(t0);
 
 	// copy from host to device
-	cudaCheckError(cudaMemcpy(bufs->field_ptr, field_ptr,
+	cudaCheckError(cudaMemcpy(d_field_ptr, h_field_ptr,
 							  src_size * 3 * sizeof(int),
 							  cudaMemcpyHostToDevice));
 	cudaCheckError(cudaMemcpy(bufs->src_bufs.img, src.img, src_size * 3,
@@ -389,7 +415,7 @@ extern "C" void launch_nnf_minimize(CudaNNFDeviceBuffers *bufs, int *field_ptr,
 		unsigned int seed = random_seed + i * 12345u;
 
 		nnf_jump_flood_kernel<<<blocks, num_threads>>>(
-			bufs->field_ptr, bufs->src_bufs.img, bufs->tgt_bufs.img,
+			d_field_ptr, bufs->src_bufs.img, bufs->tgt_bufs.img,
 			bufs->src_bufs.gx, bufs->src_bufs.gy, bufs->tgt_bufs.gx,
 			bufs->tgt_bufs.gy, bufs->src_bufs.mask, bufs->tgt_bufs.mask,
 			bufs->src_bufs.gmask, bufs->tgt_bufs.gmask, has_gmask, src.height,
@@ -399,22 +425,22 @@ extern "C" void launch_nnf_minimize(CudaNNFDeviceBuffers *bufs, int *field_ptr,
 	cudaEventRecord(t2);
 
 	// copy back from device to host
-	cudaCheckError(cudaMemcpy(field_ptr, bufs->field_ptr,
+	cudaCheckError(cudaMemcpy(h_field_ptr, d_field_ptr,
 							  src_size * 3 * sizeof(int),
 							  cudaMemcpyDeviceToHost));
-	
+
 	cudaEventRecord(t3);
-    cudaEventSynchronize(t3);
+	cudaEventSynchronize(t3);
 
 	float h2d_ms, kernel_ms, d2h_ms;
-    cudaEventElapsedTime(&h2d_ms, t0, t1);
-    cudaEventElapsedTime(&kernel_ms, t1, t2);
-    cudaEventElapsedTime(&d2h_ms, t2, t3);
-    // LOG("[TIMING] h2d=%.2fms kernel=%.2fms d2h=%.2fms total=%.2fms\n",
-    //        h2d_ms, kernel_ms, d2h_ms, h2d_ms + kernel_ms + d2h_ms);
+	cudaEventElapsedTime(&h2d_ms, t0, t1);
+	cudaEventElapsedTime(&kernel_ms, t1, t2);
+	cudaEventElapsedTime(&d2h_ms, t2, t3);
+	// LOG("[TIMING] h2d=%.2fms kernel=%.2fms d2h=%.2fms total=%.2fms\n",
+	//        h2d_ms, kernel_ms, d2h_ms, h2d_ms + kernel_ms + d2h_ms);
 
-    cudaEventDestroy(t0);
-    cudaEventDestroy(t1);
-    cudaEventDestroy(t2);
-    cudaEventDestroy(t3);
+	cudaEventDestroy(t0);
+	cudaEventDestroy(t1);
+	cudaEventDestroy(t2);
+	cudaEventDestroy(t3);
 }

@@ -60,8 +60,8 @@ class NearestNeighborField {
 		ptr[0] = y, ptr[1] = x, ptr[2] = 0;
 	}
 
-	void minimize(int nr_pass, bool is_gpu_enabled, CudaNNFDeviceBuffers *cuda_bufs = nullptr);
-	void minimize_cuda(int nr_pass, CudaNNFDeviceBuffers *bufs);
+	void minimize(int nr_pass, bool is_gpu_enabled, CudaNNFDeviceBuffers *cuda_bufs = nullptr, int *d_field_ptr = nullptr);
+	void minimize_cuda(int nr_pass, CudaNNFDeviceBuffers *bufs, int *d_field_ptr);
 
   private:
 	inline int _distance(int source_y, int source_x, int target_y,

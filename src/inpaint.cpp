@@ -4,6 +4,7 @@
 
 #include "../include/cuda_helpers.h"
 #include "../include/inpaint.h"
+#include "../include/CycleTimer.h"
 #include "masked_image.h"
 #include <iostream>
 
@@ -71,11 +72,11 @@ Inpainting::Inpainting(cv::Mat image, cv::Mat mask, cv::Mat global_mask,
 void Inpainting::_initialize_pyramid() {
 	MaskedImage source = m_initial;
 	m_pyramid.push_back(source);
-	while (source.size().height > m_distance_metric->patch_size() &&
-		   source.size().width > m_distance_metric->patch_size()) {
-		source = source.downsample();
-		m_pyramid.push_back(source);
-	}
+	// while (source.size().height > m_distance_metric->patch_size() &&
+	// 	   source.size().width > m_distance_metric->patch_size()) {
+	// 	source = source.downsample();
+	// 	m_pyramid.push_back(source);
+	// }
 
 	if (kDistance2Similarity.size() == 0) {
 		init_kDistance2Similarity();
@@ -141,8 +142,9 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 
 	MaskedImage new_source, new_target;
 
-    LOG("level %d, num_iters %d\n", level, nr_iters_em); 
+	LOG("level %d, num_iters %d\n", level, nr_iters_em);
 	for (int iter_em = 0; iter_em < nr_iters_em; ++iter_em) {
+		double t_start = CycleTimer::currentSeconds();
 		if (iter_em != 0) {
 			m_source2target.set_target(new_target);
 			m_target2source.set_source(new_target);
@@ -153,7 +155,7 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 			std::cout << "EM Iteration: " << iter_em << std::endl;
 
 		auto size = source.size();
-		bool is_gpu_candidate = checkGpuCandidacy(size);
+		// bool is_gpu_candidate = checkGpuCandidacy(size);
 		// iterates every pixel and checks if
 		// the patch centered at i,j overlaps
 		// with the mask. If not, sets itself
@@ -168,7 +170,8 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 		}
 		if (verbose)
 			std::cout << "  NNF minimization started." << std::endl;
-		if (m_gpu_enabled && is_gpu_candidate) {
+		if (m_gpu_enabled) {
+			int gpu_nnf_iters = std::max(1, nr_iters_nnf / 4);
 			if (iter_em == 0) {
 				auto src_size = source.size();
 				auto tgt_size = target.size();
@@ -179,25 +182,16 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 					!source.global_mask().empty());
 				LOG("level %d: allocate returned\n", level);
 			}
-			m_source2target.minimize(nr_iters_nnf, true, &m_cuda_buffers);
-			m_target2source.minimize(nr_iters_nnf, true, &m_cuda_buffers);
-		} else if (m_gpu_enabled && !is_gpu_candidate) {
-#pragma omp parallel sections
-			{
-#pragma omp section
-				{
-					m_source2target.minimize(nr_iters_nnf, false);
-				}
-#pragma omp section
-				{
-					m_target2source.minimize(nr_iters_nnf, false);
-				}
-			}
+			m_source2target.minimize(gpu_nnf_iters, true, &m_cuda_buffers);
+			m_target2source.minimize(gpu_nnf_iters, true, &m_cuda_buffers);
 		} else {
 			m_source2target.minimize(nr_iters_nnf, false);
 			m_target2source.minimize(nr_iters_nnf, false);
 		}
+
 		cuda_device_sync();
+
+		double t_after_nnf_minimize = CycleTimer::currentSeconds();
 		if (verbose)
 			std::cout << "  NNF minimization finished." << std::endl;
 
@@ -240,6 +234,9 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 		_maximization_step(new_target, vote);
 		if (verbose)
 			std::cout << "  Minimization step finished." << std::endl;
+
+		double t_after_em = CycleTimer::currentSeconds();
+		LOG("[EM level=%d iter=%d] nnf=%.3fs em=%.3fs\n", level, iter_em, t_after_nnf_minimize - t_start, t_after_em - t_after_nnf_minimize);
 	}
 
 	return new_target;

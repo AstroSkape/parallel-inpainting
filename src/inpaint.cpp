@@ -266,7 +266,6 @@ void Inpainting::_expectation_step(const NearestNeighborField &nnf,
 	const int patch_size = m_distance_metric->patch_size();
 
 	int thr_count = is_parallel ? omp_get_max_threads() : 1;
-	LOG("thread count: %d\n", thr_count);
 
 	std::vector<cv::Mat> local_votes(thr_count);
 	for (int t = 0; t < thr_count; ++t) {

@@ -9,16 +9,20 @@ using namespace std;
 cv::Mat createMask(cv::Mat imageWithHole)
 {
     // create mask
-    cv::Mat mask = cv::Mat(imageWithHole.size(), CV_8UC1);
+    cv::Mat mask = cv::Mat::zeros(imageWithHole.size(), CV_8UC1);
     for (size_t i = 0; i < imageWithHole.size().height; i++)
     {
         for (size_t j = 0; j < imageWithHole.size().width; j++)
         {
             cv::Vec3b pixel = imageWithHole.at<cv::Vec3b>(i, j);
-            if (pixel[0] == 255 && pixel[1] == 255 && pixel[2] == 255)
+            // fixes mask edges that are almost white 
+            if (pixel[0] >= 240 && pixel[1] >= 240 && pixel[2] >= 240)
                 mask.at<unsigned char>(i, j) = 1;
         }
     }
+    // extends the mask slightly by a couple pixels
+    cv::dilate(mask, mask, cv::Mat(), cv::Point(-1,-1), 2);
+    cv::imwrite("../images/mask_debug.png", mask * 255);
     return mask;
 }
 

@@ -6,6 +6,8 @@
 
 using namespace std;
 
+double startTime;
+
 cv::Mat createMask(cv::Mat imageWithHole)
 {
     // create mask
@@ -28,15 +30,17 @@ cv::Mat createMask(cv::Mat imageWithHole)
 
 double getExecutionTime(bool is_gpu_enabled, cv::Mat &imageWithHole, cv::Mat &mask, PatchDistanceMetric &metric)
 {
-    double startTime = CycleTimer::currentSeconds();
-    auto output = Inpainting(imageWithHole, mask, &metric, is_gpu_enabled).run(false, false);
+    startTime = CycleTimer::currentSeconds();
+    auto inpainter = Inpainting(imageWithHole, mask, &metric, is_gpu_enabled);
+    double initEndTime = CycleTimer::currentSeconds();
+    auto output = inpainter.run(false, false);
     double endTime = CycleTimer::currentSeconds();
 
     std::string ctx = is_gpu_enabled ? "GPU" : "CPU";
     std::string output_file = "output_" + ctx + ".png";
     bool success = cv::imwrite("../images/" + output_file, output);
 
-    return endTime - startTime;
+    return endTime - initEndTime;
 }
 
 int main()

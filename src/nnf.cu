@@ -383,7 +383,7 @@ extern "C" void launch_nnf_minimize(CudaNNFDeviceBuffers *bufs, int *field_ptr,
 	int num_threads = 256;
 	int blocks = (src_size + num_threads - 1) / num_threads;
 
-	LOG("[CUDA] Number of blocks: %d\n", blocks);
+	// LOG("[CUDA] Number of blocks: %d\n", blocks);
 
 	for (int i = 0; i < nr_pass; i++) {
 		unsigned int seed = random_seed + i * 12345u;
@@ -410,8 +410,8 @@ extern "C" void launch_nnf_minimize(CudaNNFDeviceBuffers *bufs, int *field_ptr,
     cudaEventElapsedTime(&h2d_ms, t0, t1);
     cudaEventElapsedTime(&kernel_ms, t1, t2);
     cudaEventElapsedTime(&d2h_ms, t2, t3);
-    LOG("[TIMING] h2d=%.2fms kernel=%.2fms d2h=%.2fms total=%.2fms\n",
-           h2d_ms, kernel_ms, d2h_ms, h2d_ms + kernel_ms + d2h_ms);
+    // LOG("[TIMING] h2d=%.2fms kernel=%.2fms d2h=%.2fms total=%.2fms\n",
+    //        h2d_ms, kernel_ms, d2h_ms, h2d_ms + kernel_ms + d2h_ms);
 
     cudaEventDestroy(t0);
     cudaEventDestroy(t1);

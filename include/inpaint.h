@@ -2,6 +2,7 @@
 #include "nnf.h"
 #include <opencv2/opencv.hpp>
 
+extern double startTime;
 class Inpainting {
   public:
 	Inpainting(cv::Mat image, cv::Mat mask, const PatchDistanceMetric *metric, bool is_gpu_enabled);

@@ -75,11 +75,11 @@ Inpainting::Inpainting(cv::Mat image, cv::Mat mask, cv::Mat global_mask,
 void Inpainting::_initialize_pyramid() {
 	MaskedImage source = m_initial;
 	m_pyramid.push_back(source);
-	while (source.size().height > m_distance_metric->patch_size() &&
-		   source.size().width > m_distance_metric->patch_size()) {
-		source = source.downsample();
-		m_pyramid.push_back(source);
-	}
+	// while (source.size().height > m_distance_metric->patch_size() &&
+	// 	   source.size().width > m_distance_metric->patch_size()) {
+	// 	source = source.downsample();
+	// 	m_pyramid.push_back(source);
+	// }
 
 	if (kDistance2Similarity.size() == 0) {
 		init_kDistance2Similarity();
@@ -92,6 +92,7 @@ cv::Mat Inpainting::run(bool verbose, bool verbose_visualize,
 	const int nr_levels = m_pyramid.size();
 
 	MaskedImage source, target;
+	auto prevEolTime = startTime;
 	for (int level = nr_levels - 1; level >= 0; --level) {
 		if (verbose)
 			std::cout << "Inpainting level: " << level << std::endl;
@@ -111,6 +112,7 @@ cv::Mat Inpainting::run(bool verbose, bool verbose_visualize,
 			m_target2source = NearestNeighborField(
 				target, source, m_distance_metric, m_target2source);
 		}
+		auto postInitTime = CycleTimer::currentSeconds();
 
 		if (verbose)
 			std::cout << "Initialization done." << std::endl;
@@ -128,6 +130,9 @@ cv::Mat Inpainting::run(bool verbose, bool verbose_visualize,
 		}
 
 		target = _expectation_maximization(source, target, level, verbose);
+		auto eolTime = CycleTimer::currentSeconds();
+		LOG("time to process level %d: %lfs, initTime: %lfs\n", level, eolTime - prevEolTime, postInitTime - prevEolTime);
+		prevEolTime = eolTime;
 	}
 
 	return target.image();
@@ -145,7 +150,8 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 
 	MaskedImage new_source, new_target;
 
-	LOG("level %d, num_iters %d\n", level, nr_iters_em);
+	int gpu_nnf_iters = std::max(1, nr_iters_nnf / 4);
+	LOG("level %d, num_iters %d\n", level, m_gpu_enabled ? gpu_nnf_iters : nr_iters_em );
 	for (int iter_em = 0; iter_em < nr_iters_em; ++iter_em) {
 		double t_start = CycleTimer::currentSeconds();
 		if (iter_em != 0) {
@@ -174,16 +180,13 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 		if (verbose)
 			std::cout << "  NNF minimization started." << std::endl;
 		if (m_gpu_enabled) {
-			int gpu_nnf_iters = std::max(1, nr_iters_nnf / 4);
 			if (iter_em == 0) {
 				auto src_size = source.size();
 				auto tgt_size = target.size();
-				LOG("level %d: allocating device buffers\n", level);
 				m_cuda_buffers.allocate_device_buffers(
 					src_size.height * src_size.width,
 					tgt_size.height * tgt_size.width,
 					!source.global_mask().empty());
-				LOG("level %d: allocate returned\n", level);
 			}
 			m_source2target.minimize(gpu_nnf_iters, true, &m_cuda_buffers);
 			m_target2source.minimize(gpu_nnf_iters, true, &m_cuda_buffers);
@@ -246,10 +249,10 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 
 		double t_after_em = CycleTimer::currentSeconds();
 		LOG("[EM level=%d iter=%d] nnf=%.3fs upscaling=%.3fs expectation=%.3fs "
-			"maximization=%.3fs\n",
+			"maximization=%.3fs, total=%.3fs\n",
 			level, iter_em, t_after_nnf_minimize - t_start,
 			t_after_upscaling - t_after_nnf_minimize,
-			t_after_estep - t_after_upscaling, t_after_em - t_after_estep);
+			t_after_estep - t_after_upscaling, t_after_em - t_after_estep, t_after_em - t_start);
 	}
 
 	return new_target;

@@ -18,7 +18,7 @@ class Inpainting {
 	void _expectation_step(const NearestNeighborField &nnf, bool source2target,
 						   cv::Mat &vote, const MaskedImage &source,
 						   bool upscaled, bool is_parallel);
-	void _maximization_step(MaskedImage &target, const cv::Mat &vote);
+	void _maximization_step(MaskedImage &target, const cv::Mat &vote, bool is_parallel);
 
 	MaskedImage m_initial;
 	std::vector<MaskedImage> m_pyramid;

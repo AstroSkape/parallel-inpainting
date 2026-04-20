@@ -240,7 +240,7 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 		double t_after_estep = CycleTimer::currentSeconds();
 
 		// M step - Compile votes (averaged) and update pixel values.
-		_maximization_step(new_target, vote);
+		_maximization_step(new_target, vote, m_gpu_enabled);
 		if (verbose)
 			std::cout << "  Minimization step finished." << std::endl;
 
@@ -343,8 +343,11 @@ void Inpainting::_expectation_step(const NearestNeighborField &nnf,
 }
 
 // Maximization Step: maximum likelihood of target pixel.
-void Inpainting::_maximization_step(MaskedImage &target, const cv::Mat &vote) {
+void Inpainting::_maximization_step(MaskedImage &target, const cv::Mat &vote, bool is_parallel) {
 	auto target_size = target.size();
+	int thr_count = is_parallel ? omp_get_max_threads() : 1;
+
+	#pragma omp parallel for collapse(2) num_threads(thr_count) schedule(static)
 	for (int i = 0; i < target_size.height; ++i) {
 		for (int j = 0; j < target_size.width; ++j) {
 			const double *source_ptr = vote.ptr<double>(i, j);

@@ -92,11 +92,6 @@ void NearestNeighborField::minimize(int nr_pass, bool is_gpu_enabled, CudaNNFDev
 		return;
 	}
 
-	// if (is_gpu_enabled && isGpuCandidate(this_size)) {
-	// 	minimize_cuda(nr_pass);
-	// 	return;
-	// }
-
 	while (nr_pass--) {
 		// top left to bottom right
 		for (int i = 0; i < this_size.height; ++i)

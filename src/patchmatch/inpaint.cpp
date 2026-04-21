@@ -2,10 +2,10 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
-#include "utils/cycle_timer.h"
 #include "cuda/cuda_buffers.h"
 #include "patchmatch/inpaint.h"
 #include "patchmatch/masked_image.h"
+#include "utils/cycle_timer.h"
 #include <iostream>
 
 #include <omp.h>
@@ -89,6 +89,100 @@ void Inpainting::_initialize_pyramid() {
 	}
 }
 
+void Inpainting::_create_fields_at_level(const MaskedImage &source,
+										 const MaskedImage &target,
+										 bool is_coarsest_level) {
+	if (is_coarsest_level) {
+		m_source2target = NearestNeighborField(
+			source, target, m_distance_metric, MAX_RETRIES, m_gpu_enabled);
+		m_target2source = NearestNeighborField(
+			target, source, m_distance_metric, MAX_RETRIES, m_gpu_enabled);
+	} else {
+		m_source2target =
+			NearestNeighborField(source, target, m_distance_metric,
+								 m_source2target, MAX_RETRIES, m_gpu_enabled);
+		m_target2source =
+			NearestNeighborField(target, source, m_distance_metric,
+								 m_target2source, MAX_RETRIES, m_gpu_enabled);
+	}
+}
+
+void Inpainting::_initialize_fields_on_gpu(const MaskedImage &source,
+										   const MaskedImage &target,
+										   bool is_coarsest_level,
+										   cv::Size prev_source_size,
+										   cv::Size prev_target_size) {
+	auto src_size = source.size();
+	auto tgt_size = target.size();
+	bool has_gmask = !source.global_mask().empty();
+
+	m_cuda_buffers.allocate_device_buffers(src_size.height * src_size.width,
+										   tgt_size.height * tgt_size.width,
+										   has_gmask);
+
+	unsigned int init_seed = (unsigned int)rand();
+
+	if (is_coarsest_level) {
+		m_source2target.initialize_cuda_randomize(
+			&m_cuda_buffers, m_cuda_buffers.s2t_curr, 20, init_seed);
+		m_target2source.initialize_cuda_randomize(&m_cuda_buffers,
+												  m_cuda_buffers.t2s_curr, 20,
+												  init_seed ^ 0xDEADBEEF);
+	} else {
+		// prev buffers still hold the previous level's field.
+		// s2t's "other source" is the previous level's source.
+		// t2s's "other source" is the previous level's target.
+		m_source2target.initialize_cuda_from(
+			&m_cuda_buffers, m_cuda_buffers.s2t_curr, m_cuda_buffers.s2t_prev,
+			prev_source_size, 20, init_seed);
+		m_target2source.initialize_cuda_from(
+			&m_cuda_buffers, m_cuda_buffers.t2s_curr, m_cuda_buffers.t2s_prev,
+			prev_target_size, 20, init_seed ^ 0xABCDu);
+	}
+}
+
+void Inpainting::_visualize_runs(const MaskedImage &source,
+								 const MaskedImage &target) const {
+	auto visualize_size = m_initial.size();
+	cv::Mat source_visualize(visualize_size, m_initial.image().type());
+	cv::resize(source.image(), source_visualize, visualize_size);
+	cv::imshow("Source", source_visualize);
+	cv::Mat target_visualize(visualize_size, m_initial.image().type());
+	cv::resize(target.image(), target_visualize, visualize_size);
+	cv::imshow("Target", target_visualize);
+	std::cout << "Press a key to continue" << std::endl;
+	cv::waitKey(0);
+}
+
+void Inpainting::_set_identity_on_field(const MaskedImage &source,
+										const MaskedImage &target, int iter_em,
+										int patch_size) {
+	if (m_gpu_enabled) {
+		if (iter_em == 0) {
+			auto src_size = source.size();
+			auto tgt_size = target.size();
+			m_cuda_buffers.allocate_device_buffers(
+				src_size.height * src_size.width,
+				tgt_size.height * tgt_size.width,
+				!source.global_mask().empty());
+		}
+		m_source2target.set_identity_cuda(&m_cuda_buffers,
+										  m_cuda_buffers.s2t_curr, source);
+		m_target2source.set_identity_cuda(&m_cuda_buffers,
+										  m_cuda_buffers.t2s_curr, source);
+	} else {
+		auto size = source.size();
+		for (int i = 0; i < size.height; ++i) {
+			for (int j = 0; j < size.width; ++j) {
+				if (!source.contains_mask(i, j, patch_size)) {
+					m_source2target.set_identity(i, j);
+					m_target2source.set_identity(i, j);
+				}
+			}
+		}
+	}
+}
+
 cv::Mat Inpainting::run(bool verbose, bool verbose_visualize,
 						unsigned int random_seed) {
 	srand(random_seed);
@@ -103,82 +197,40 @@ cv::Mat Inpainting::run(bool verbose, bool verbose_visualize,
 			std::cout << "Inpainting level: " << level << std::endl;
 
 		source = m_pyramid[level];
+		bool is_coarsest_level = (level == nr_levels - 1);
 
-		if (level == nr_levels - 1) {
+		if (is_coarsest_level) {
 			target = source.clone();
 			target.clear_mask();
-			m_source2target =
-				NearestNeighborField(source, target, m_distance_metric, MAX_RETRIES, m_gpu_enabled);
-			m_target2source =
-				NearestNeighborField(target, source, m_distance_metric, MAX_RETRIES, m_gpu_enabled);
-		} else {
-			m_source2target = NearestNeighborField(
-				source, target, m_distance_metric, m_source2target, MAX_RETRIES, m_gpu_enabled);
-			m_target2source = NearestNeighborField(
-				target, source, m_distance_metric, m_target2source, MAX_RETRIES, m_gpu_enabled);
 		}
 
+		_create_fields_at_level(source, target, is_coarsest_level);
+
 		if (m_gpu_enabled) {
-			auto src_size = source.size();
-			auto tgt_size = target.size();
-			bool has_gmask = !source.global_mask().empty();
-
-			m_cuda_buffers.allocate_device_buffers(
-				src_size.height * src_size.width,
-				tgt_size.height * tgt_size.width,
-				has_gmask);
-
-			unsigned int init_seed = (unsigned int)rand();
-
-			if (level == nr_levels - 1) {
-				m_source2target.initialize_cuda_randomize(
-					&m_cuda_buffers, m_cuda_buffers.s2t_curr, 20, init_seed);
-				m_target2source.initialize_cuda_randomize(
-					&m_cuda_buffers, m_cuda_buffers.t2s_curr, 20, init_seed ^ 0xDEADBEEF);
-			} else {
-				// prev buffers still hold the previous level's field.
-				// s2t's "other source" is the previous level's source.
-				// t2s's "other source" is the previous level's target.
-				m_source2target.initialize_cuda_from(
-					&m_cuda_buffers, m_cuda_buffers.s2t_curr,
-					m_cuda_buffers.s2t_prev,
-					prev_source_size, 20, init_seed);
-				m_target2source.initialize_cuda_from(
-					&m_cuda_buffers, m_cuda_buffers.t2s_curr,
-					m_cuda_buffers.t2s_prev,
-					prev_target_size, 20, init_seed ^ 0xABCDu);
-			}
+			_initialize_fields_on_gpu(source, target, is_coarsest_level,
+									  prev_source_size, prev_target_size);
 		}
 
 		prev_source_size = source.size();
-    	prev_target_size = target.size();
-
+		prev_target_size = target.size();
 
 		auto postInitTime = CycleTimer::currentSeconds();
 
 		if (verbose)
 			std::cout << "Initialization done." << std::endl;
 
-		if (verbose_visualize) {
-			auto visualize_size = m_initial.size();
-			cv::Mat source_visualize(visualize_size, m_initial.image().type());
-			cv::resize(source.image(), source_visualize, visualize_size);
-			cv::imshow("Source", source_visualize);
-			cv::Mat target_visualize(visualize_size, m_initial.image().type());
-			cv::resize(target.image(), target_visualize, visualize_size);
-			cv::imshow("Target", target_visualize);
-			std::cout << "Press a key to continue" << std::endl;
-			cv::waitKey(0);
-		}
+		if (verbose_visualize)
+			_visualize_runs(source, target);
 
 		target = _expectation_maximization(source, target, level, verbose);
 
-		 if (m_gpu_enabled) {
+		if (m_gpu_enabled) {
 			m_cuda_buffers.swap_s2t_fields();
 			m_cuda_buffers.swap_t2s_fields();
 		}
 		auto eolTime = CycleTimer::currentSeconds();
-		LOG("time to process level %d: %lfs, initTime: %lfs\n", level, eolTime - prevEolTime, postInitTime - prevEolTime);
+		LOG("time to process level %d: %lfs, initTime: %lfs\n", level,
+			eolTime - prevEolTime, postInitTime - prevEolTime);
 		prevEolTime = eolTime;
 	}
 
@@ -198,7 +250,8 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 	MaskedImage new_source, new_target;
 
 	int gpu_nnf_iters = std::max(1, nr_iters_nnf / 4);
-	LOG("level %d, num_iters %d\n", level, m_gpu_enabled ? gpu_nnf_iters : nr_iters_em );
+	LOG("level %d, num_iters %d\n", level,
+		m_gpu_enabled ? gpu_nnf_iters : nr_iters_em);
 	for (int iter_em = 0; iter_em < nr_iters_em; ++iter_em) {
 		double t_start = CycleTimer::currentSeconds();
 		if (iter_em != 0) {
@@ -211,40 +264,22 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 			std::cout << "EM Iteration: " << iter_em << std::endl;
 
 		auto size = source.size();
-		// bool is_gpu_candidate = checkGpuCandidacy(size);
+
 		// iterates every pixel and checks if
 		// the patch centered at i,j overlaps
 		// with the mask. If not, sets itself
 		// as nearest patch (identity)
-		if (m_gpu_enabled) {
-			// allocate device buffers first if not done.
-			if (iter_em == 0) {
-				auto src_size = source.size();
-				auto tgt_size = target.size();
-				m_cuda_buffers.allocate_device_buffers(
-					src_size.height * src_size.width,
-					tgt_size.height * tgt_size.width,
-					!source.global_mask().empty());
-			}
-			m_source2target.set_identity_cuda(&m_cuda_buffers,
-											m_cuda_buffers.s2t_curr, source);
-			m_target2source.set_identity_cuda(&m_cuda_buffers,
-											m_cuda_buffers.t2s_curr, source);
-		} else {
-			for (int i = 0; i < size.height; ++i) {
-				for (int j = 0; j < size.width; ++j) {
-					if (!source.contains_mask(i, j, patch_size)) {
-						m_source2target.set_identity(i, j);
-						m_target2source.set_identity(i, j);
-					}
-				}
-			}
-		}
+		_set_identity_on_field(source, target, iter_em, patch_size);
+
 		if (verbose)
 			std::cout << "  NNF minimization started." << std::endl;
 		if (m_gpu_enabled) {
-			m_source2target.minimize(gpu_nnf_iters, true, &m_cuda_buffers, m_cuda_buffers.s2t_curr, m_cuda_buffers.s2t_prev);
-			m_target2source.minimize(gpu_nnf_iters, true, &m_cuda_buffers, m_cuda_buffers.t2s_curr, m_cuda_buffers.t2s_prev);
+			m_source2target.minimize(gpu_nnf_iters, true, &m_cuda_buffers,
+									 m_cuda_buffers.s2t_curr,
+									 m_cuda_buffers.s2t_prev);
+			m_target2source.minimize(gpu_nnf_iters, true, &m_cuda_buffers,
+									 m_cuda_buffers.t2s_curr,
+									 m_cuda_buffers.t2s_prev);
 		} else {
 			m_source2target.minimize(nr_iters_nnf, false);
 			m_target2source.minimize(nr_iters_nnf, false);
@@ -307,7 +342,8 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 			"maximization=%.3fs, total=%.3fs\n",
 			level, iter_em, t_after_nnf_minimize - t_start,
 			t_after_upscaling - t_after_nnf_minimize,
-			t_after_estep - t_after_upscaling, t_after_em - t_after_estep, t_after_em - t_start);
+			t_after_estep - t_after_upscaling, t_after_em - t_after_estep,
+			t_after_em - t_start);
 	}
 
 	return new_target;
@@ -333,7 +369,7 @@ void Inpainting::_expectation_step(const NearestNeighborField &nnf,
 		int tid = omp_get_thread_num();
 		auto local_vote = local_votes[tid];
 
-		#pragma omp for collapse(2) schedule(static)
+#pragma omp for collapse(2) schedule(static)
 		for (int i = 0; i < source_size.height; ++i) {
 			for (int j = 0; j < source_size.width; ++j) {
 				if (nnf.source().is_globally_masked(i, j))
@@ -382,7 +418,7 @@ void Inpainting::_expectation_step(const NearestNeighborField &nnf,
 
 	vote.setTo(cv::Scalar::all(0));
 
-	#pragma omp parallel for collapse(2) schedule(static) num_threads(thr_count)
+#pragma omp parallel for collapse(2) schedule(static) num_threads(thr_count)
 	for (int y = 0; y < vote.rows; ++y) {
 		for (int x = 0; x < vote.cols; ++x) {
 			double *dst = vote.ptr<double>(y, x);
@@ -398,11 +434,12 @@ void Inpainting::_expectation_step(const NearestNeighborField &nnf,
 }
 
 // Maximization Step: maximum likelihood of target pixel.
-void Inpainting::_maximization_step(MaskedImage &target, const cv::Mat &vote, bool is_parallel) {
+void Inpainting::_maximization_step(MaskedImage &target, const cv::Mat &vote,
+									bool is_parallel) {
 	auto target_size = target.size();
 	int thr_count = is_parallel ? std::min(omp_get_max_threads(), 16) : 1;
 
-	#pragma omp parallel for collapse(2) num_threads(thr_count) schedule(static)
+#pragma omp parallel for collapse(2) num_threads(thr_count) schedule(static)
 	for (int i = 0; i < target_size.height; ++i) {
 		for (int j = 0; j < target_size.width; ++j) {
 			const double *source_ptr = vote.ptr<double>(i, j);

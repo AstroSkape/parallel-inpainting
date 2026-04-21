@@ -2,6 +2,8 @@
 #include "nnf.h"
 #include <opencv2/opencv.hpp>
 
+#define SEED_SALT 0xDEADBEEFu
+
 extern double startTime;
 class Inpainting {
   public:

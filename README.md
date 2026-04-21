@@ -39,5 +39,5 @@ Add this to ~/.bashrc to persist it.
 
 ## References
 
-https://github.com/younesse-cv/PatchMatch
-https://github.com/vacancy/PyPatchMatch
+1. https://github.com/younesse-cv/PatchMatch
+2. https://github.com/vacancy/PyPatchMatch

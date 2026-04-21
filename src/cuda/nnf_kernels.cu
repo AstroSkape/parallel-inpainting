@@ -6,13 +6,15 @@
 #define RED 0
 #define BLACK 1
 
+#define WANG_SALT 0x27d4eb2d
+
 // Wang hash
 // Code adapted from https://burtleburtle.net/bob/hash/integer.html
 __device__ unsigned int wang_hash(unsigned int a) {
 	a = (a ^ 61) ^ (a >> 16);
 	a = a + (a << 3);
 	a = a ^ (a >> 4);
-	a = a * 0x27d4eb2d;
+	a = a * WANG_SALT;
 	a = a ^ (a >> 15);
 	return a;
 }
@@ -600,7 +602,7 @@ extern "C" void launch_nnf_initialize_from(
 		bufs->src_bufs.gy, bufs->tgt_bufs.gx, bufs->tgt_bufs.gy,
 		bufs->src_bufs.mask, bufs->tgt_bufs.mask, bufs->src_bufs.gmask,
 		bufs->tgt_bufs.gmask, has_gmask, src.height, src.width, tgt.height,
-		tgt.width, patch_size, max_retry, false, seed ^ 0xDEADBEEF);
+		tgt.width, patch_size, max_retry, false, seed ^ 0xDEADBEEFu);
 }
 
 __device__ bool d_is_patch_masked(const unsigned char *mask,

@@ -127,7 +127,7 @@ void Inpainting::_initialize_fields_on_gpu(const MaskedImage &source,
 			&m_cuda_buffers, m_cuda_buffers.s2t_curr, 20, init_seed);
 		m_target2source.initialize_cuda_randomize(&m_cuda_buffers,
 												  m_cuda_buffers.t2s_curr, 20,
-												  init_seed ^ 0xDEADBEEF);
+												  init_seed ^ SEED_SALT);
 	} else {
 		// prev buffers still hold the previous level's field.
 		// s2t's "other source" is the previous level's source.
@@ -137,7 +137,7 @@ void Inpainting::_initialize_fields_on_gpu(const MaskedImage &source,
 			prev_source_size, 20, init_seed);
 		m_target2source.initialize_cuda_from(
 			&m_cuda_buffers, m_cuda_buffers.t2s_curr, m_cuda_buffers.t2s_prev,
-			prev_target_size, 20, init_seed ^ 0xABCDu);
+			prev_target_size, 20, init_seed ^ SEED_SALT);
 	}
 }
 

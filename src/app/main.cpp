@@ -1,8 +1,8 @@
 #include <cstddef>
 #include <iostream>
 
-#include "inpaint.h"
-#include "CycleTimer.h"
+#include "patchmatch/inpaint.h"
+#include "utils/cycle_timer.h"
 
 using namespace std;
 

@@ -1,6 +1,5 @@
 #pragma once
 #include <iostream>
-#include "cuda_helpers.h"
 
 #ifdef DEBUG
 #define cudaCheckError(ans) cudaAssert((ans), __FILE__, __LINE__);

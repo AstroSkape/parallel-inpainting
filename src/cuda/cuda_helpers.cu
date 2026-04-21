@@ -1,5 +1,5 @@
 #include <cuda_runtime.h>
-#include "cuda_helpers.cuh"
+#include "cuda/cuda_helpers.cuh"
 
 void cuda_device_sync()
 {

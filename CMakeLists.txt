@@ -20,6 +20,6 @@ find_package(OpenMP REQUIRED)
 
 include_directories(${OpenCV_INCLUDE_DIRS} include)
 
-add_executable(inpaint src/main.cpp src/inpaint.cpp src/masked_image.cpp src/nnf.cpp src/nnf.cu src/cuda.cpp src/cuda_helpers.cu)
+add_executable(inpaint src/app/main.cpp src/patchmatch/inpaint.cpp src/patchmatch/masked_image.cpp src/patchmatch/nnf.cpp src/cuda/nnf_kernels.cu src/cuda/cuda.cpp src/cuda/cuda_helpers.cu)
 
 target_link_libraries(inpaint ${OpenCV_LIBS} OpenMP::OpenMP_CXX)

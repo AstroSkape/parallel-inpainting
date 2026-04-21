@@ -2,10 +2,10 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
-#include "CycleTimer.h"
-#include "cuda_helpers.h"
-#include "inpaint.h"
-#include "masked_image.h"
+#include "utils/cycle_timer.h"
+#include "cuda/cuda_buffers.h"
+#include "patchmatch/inpaint.h"
+#include "patchmatch/masked_image.h"
 #include <iostream>
 
 #include <omp.h>
@@ -243,14 +243,6 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 		if (verbose)
 			std::cout << "  NNF minimization started." << std::endl;
 		if (m_gpu_enabled) {
-			// if (iter_em == 0) {
-			// 	auto src_size = source.size();
-			// 	auto tgt_size = target.size();
-			// 	m_cuda_buffers.allocate_device_buffers(
-			// 		src_size.height * src_size.width,
-			// 		tgt_size.height * tgt_size.width,
-			// 		!source.global_mask().empty());
-			// }
 			m_source2target.minimize(gpu_nnf_iters, true, &m_cuda_buffers, m_cuda_buffers.s2t_curr, m_cuda_buffers.s2t_prev);
 			m_target2source.minimize(gpu_nnf_iters, true, &m_cuda_buffers, m_cuda_buffers.t2s_curr, m_cuda_buffers.t2s_prev);
 		} else {

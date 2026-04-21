@@ -1,5 +1,5 @@
-#include "cuda_helpers.cuh"
-#include "cuda_helpers.h"
+#include "cuda/cuda_helpers.cuh"
+#include "cuda/cuda_buffers.h"
 #include <cuda_runtime.h>
 #include <iostream>
 

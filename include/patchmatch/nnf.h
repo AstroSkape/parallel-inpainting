@@ -1,6 +1,6 @@
 #pragma once
-#include "cuda_helpers.h"
-#include "masked_image.h"
+#include "cuda/cuda_buffers.h"
+#include "patchmatch/masked_image.h"
 #include <opencv2/core.hpp>
 
 bool checkGpuCandidacy(cv::Size size);

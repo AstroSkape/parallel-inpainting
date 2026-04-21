@@ -1,7 +1,7 @@
 #pragma once
+#include "cuda_helpers.h"
 #include "masked_image.h"
 #include <opencv2/core.hpp>
-#include "cuda_helpers.h"
 
 bool checkGpuCandidacy(cv::Size size);
 
@@ -25,17 +25,21 @@ class NearestNeighborField {
 	NearestNeighborField()
 		: m_source(), m_target(), m_field(), m_distance_metric(nullptr) {}
 	NearestNeighborField(const MaskedImage &source, const MaskedImage &target,
-						 const PatchDistanceMetric *metric, int max_retry = 20)
+						 const PatchDistanceMetric *metric, int max_retry = 20,
+						 bool skip_host_init = false)
 		: m_source(source), m_target(target), m_distance_metric(metric) {
 		m_field = cv::Mat(m_source.size(), CV_32SC3);
-		_randomize_field(max_retry);
+		if (!skip_host_init)
+			_randomize_field(max_retry);
 	}
 	NearestNeighborField(const MaskedImage &source, const MaskedImage &target,
 						 const PatchDistanceMetric *metric,
-						 const NearestNeighborField &other, int max_retry = 20)
+						 const NearestNeighborField &other, int max_retry = 20,
+						 bool skip_host_init = false)
 		: m_source(source), m_target(target), m_distance_metric(metric) {
 		m_field = cv::Mat(m_source.size(), CV_32SC3);
-		_initialize_field_from(other, max_retry);
+		if (!skip_host_init)
+			_initialize_field_from(other, max_retry);
 	}
 
 	const MaskedImage &source() const { return m_source; }
@@ -60,8 +64,18 @@ class NearestNeighborField {
 		ptr[0] = y, ptr[1] = x, ptr[2] = 0;
 	}
 
-	void minimize(int nr_pass, bool is_gpu_enabled, CudaNNFDeviceBuffers *cuda_bufs = nullptr, int *d_field_ptr = nullptr);
-	void minimize_cuda(int nr_pass, CudaNNFDeviceBuffers *bufs, int *d_field_ptr);
+	void minimize(int nr_pass, bool is_gpu_enabled,
+				  CudaNNFDeviceBuffers *cuda_bufs = nullptr,
+				  int *d_field_ptr = nullptr);
+	void minimize_cuda(int nr_pass, CudaNNFDeviceBuffers *bufs,
+					   int *d_field_ptr);
+	void initialize_cuda_randomize(CudaNNFDeviceBuffers *bufs, int *d_field_ptr,
+								   int max_retry, unsigned int seed);
+	void initialize_cuda_from(CudaNNFDeviceBuffers *bufs, int *d_field_ptr,
+							  const int *other_d_field_ptr,
+							  cv::Size other_source_size, int max_retry,
+							  unsigned int seed);
+	void set_identity_cuda(CudaNNFDeviceBuffers *bufs, int *d_field_ptr, const MaskedImage &mask_source);
 
   private:
 	inline int _distance(int source_y, int source_x, int target_y,

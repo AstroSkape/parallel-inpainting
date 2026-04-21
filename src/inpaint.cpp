@@ -11,6 +11,9 @@
 #include <omp.h>
 #include <vector>
 
+#define MAX_RETRIES 20
+
+static int thr_count;
 namespace {
 // lookup table that converts patch distance to similarity
 static std::vector<double> kDistance2Similarity;
@@ -90,8 +93,10 @@ cv::Mat Inpainting::run(bool verbose, bool verbose_visualize,
 						unsigned int random_seed) {
 	srand(random_seed);
 	const int nr_levels = m_pyramid.size();
+	thr_count = m_gpu_enabled ? omp_get_max_threads() : 1;
 
 	MaskedImage source, target;
+	cv::Size prev_source_size, prev_target_size;
 	auto prevEolTime = startTime;
 	for (int level = nr_levels - 1; level >= 0; --level) {
 		if (verbose)
@@ -103,15 +108,52 @@ cv::Mat Inpainting::run(bool verbose, bool verbose_visualize,
 			target = source.clone();
 			target.clear_mask();
 			m_source2target =
-				NearestNeighborField(source, target, m_distance_metric);
+				NearestNeighborField(source, target, m_distance_metric, MAX_RETRIES, m_gpu_enabled);
 			m_target2source =
-				NearestNeighborField(target, source, m_distance_metric);
+				NearestNeighborField(target, source, m_distance_metric, MAX_RETRIES, m_gpu_enabled);
 		} else {
 			m_source2target = NearestNeighborField(
-				source, target, m_distance_metric, m_source2target);
+				source, target, m_distance_metric, m_source2target, MAX_RETRIES, m_gpu_enabled);
 			m_target2source = NearestNeighborField(
-				target, source, m_distance_metric, m_target2source);
+				target, source, m_distance_metric, m_target2source, MAX_RETRIES, m_gpu_enabled);
 		}
+
+		if (m_gpu_enabled) {
+			auto src_size = source.size();
+			auto tgt_size = target.size();
+			bool has_gmask = !source.global_mask().empty();
+
+			m_cuda_buffers.allocate_device_buffers(
+				src_size.height * src_size.width,
+				tgt_size.height * tgt_size.width,
+				has_gmask);
+
+			unsigned int init_seed = (unsigned int)rand();
+
+			if (level == nr_levels - 1) {
+				m_source2target.initialize_cuda_randomize(
+					&m_cuda_buffers, m_cuda_buffers.s2t_curr, 20, init_seed);
+				m_target2source.initialize_cuda_randomize(
+					&m_cuda_buffers, m_cuda_buffers.t2s_curr, 20, init_seed ^ 0xDEADBEEF);
+			} else {
+				// prev buffers still hold the previous level's field.
+				// s2t's "other source" is the previous level's source.
+				// t2s's "other source" is the previous level's target.
+				m_source2target.initialize_cuda_from(
+					&m_cuda_buffers, m_cuda_buffers.s2t_curr,
+					m_cuda_buffers.s2t_prev,
+					prev_source_size, 20, init_seed);
+				m_target2source.initialize_cuda_from(
+					&m_cuda_buffers, m_cuda_buffers.t2s_curr,
+					m_cuda_buffers.t2s_prev,
+					prev_target_size, 20, init_seed ^ 0xABCDu);
+			}
+		}
+
+		prev_source_size = source.size();
+    	prev_target_size = target.size();
+
+
 		auto postInitTime = CycleTimer::currentSeconds();
 
 		if (verbose)
@@ -130,6 +172,11 @@ cv::Mat Inpainting::run(bool verbose, bool verbose_visualize,
 		}
 
 		target = _expectation_maximization(source, target, level, verbose);
+
+		 if (m_gpu_enabled) {
+			m_cuda_buffers.swap_s2t_fields();
+			m_cuda_buffers.swap_t2s_fields();
+		}
 		auto eolTime = CycleTimer::currentSeconds();
 		LOG("time to process level %d: %lfs, initTime: %lfs\n", level, eolTime - prevEolTime, postInitTime - prevEolTime);
 		prevEolTime = eolTime;
@@ -169,17 +216,8 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 		// the patch centered at i,j overlaps
 		// with the mask. If not, sets itself
 		// as nearest patch (identity)
-		for (int i = 0; i < size.height; ++i) {
-			for (int j = 0; j < size.width; ++j) {
-				if (!source.contains_mask(i, j, patch_size)) {
-					m_source2target.set_identity(i, j);
-					m_target2source.set_identity(i, j);
-				}
-			}
-		}
-		if (verbose)
-			std::cout << "  NNF minimization started." << std::endl;
 		if (m_gpu_enabled) {
+			// allocate device buffers first if not done.
 			if (iter_em == 0) {
 				auto src_size = source.size();
 				auto tgt_size = target.size();
@@ -188,6 +226,31 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 					tgt_size.height * tgt_size.width,
 					!source.global_mask().empty());
 			}
+			m_source2target.set_identity_cuda(&m_cuda_buffers,
+											m_cuda_buffers.s2t_curr, source);
+			m_target2source.set_identity_cuda(&m_cuda_buffers,
+											m_cuda_buffers.t2s_curr, source);
+		} else {
+			for (int i = 0; i < size.height; ++i) {
+				for (int j = 0; j < size.width; ++j) {
+					if (!source.contains_mask(i, j, patch_size)) {
+						m_source2target.set_identity(i, j);
+						m_target2source.set_identity(i, j);
+					}
+				}
+			}
+		}
+		if (verbose)
+			std::cout << "  NNF minimization started." << std::endl;
+		if (m_gpu_enabled) {
+			// if (iter_em == 0) {
+			// 	auto src_size = source.size();
+			// 	auto tgt_size = target.size();
+			// 	m_cuda_buffers.allocate_device_buffers(
+			// 		src_size.height * src_size.width,
+			// 		tgt_size.height * tgt_size.width,
+			// 		!source.global_mask().empty());
+			// }
 			m_source2target.minimize(gpu_nnf_iters, true, &m_cuda_buffers, m_cuda_buffers.s2t_curr);
 			m_target2source.minimize(gpu_nnf_iters, true, &m_cuda_buffers, m_cuda_buffers.t2s_curr);
 		} else {
@@ -268,8 +331,6 @@ void Inpainting::_expectation_step(const NearestNeighborField &nnf,
 	auto target_size = nnf.target_size();
 	const int patch_size = m_distance_metric->patch_size();
 
-	int thr_count = is_parallel ? omp_get_max_threads() : 1;
-
 	std::vector<cv::Mat> local_votes(thr_count);
 	for (int t = 0; t < thr_count; ++t) {
 		local_votes[t] = cv::Mat::zeros(vote.size(), vote.type());
@@ -347,7 +408,7 @@ void Inpainting::_expectation_step(const NearestNeighborField &nnf,
 // Maximization Step: maximum likelihood of target pixel.
 void Inpainting::_maximization_step(MaskedImage &target, const cv::Mat &vote, bool is_parallel) {
 	auto target_size = target.size();
-	int thr_count = is_parallel ? omp_get_max_threads() : 1;
+	int thr_count = is_parallel ? std::min(omp_get_max_threads(), 16) : 1;
 
 	#pragma omp parallel for collapse(2) num_threads(thr_count) schedule(static)
 	for (int i = 0; i < target_size.height; ++i) {

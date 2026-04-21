@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Parallel Image Inpainting · 15-618 Final Project</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:wght@400;500;600&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --text: #e8e6df;
+    --text-muted: #a8a59b;
+    --text-faint: #6d6a61;
+    --bg: #0f0f10;
+    --surface: #1a1a1c;
+    --surface-raised: #222224;
+    --border: #2a2a2d;
+    --border-strong: #3a3a3e;
+    --accent: #e88a6a;
+    --accent-soft: #2a1d18;
+    --done-bg: #1a2e22;
+    --done-text: #7dc095;
+    --progress-bg: #2e2518;
+    --progress-text: #e0a860;
+    --upcoming-bg: #26262a;
+    --upcoming-text: #9a978e;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  .container {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 4rem 1.5rem 6rem;
+  }
+  header {
+    text-align: center;
+    padding-bottom: 2.5rem;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 3rem;
+  }
+  .eyebrow {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--accent);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    margin: 0 0 1rem;
+    font-weight: 500;
+  }
+  h1 {
+    font-family: 'Crimson Pro', Georgia, serif;
+    font-size: clamp(2rem, 5vw, 2.75rem);
+    font-weight: 500;
+    line-height: 1.15;
+    margin: 0 0 1rem;
+    letter-spacing: -0.01em;
+    color: #f5f3ec;
+  }
+  .subtitle {
+    font-family: 'Crimson Pro', Georgia, serif;
+    font-size: 1.2rem;
+    color: var(--text-muted);
+    font-style: italic;
+    margin: 0 0 1.75rem;
+    font-weight: 400;
+  }
+  .authors {
+    font-size: 0.95rem;
+    margin: 0;
+  }
+  .authors .separator {
+    color: var(--text-faint);
+    margin: 0 0.75rem;
+  }
+  .affiliation {
+    font-size: 0.85rem;
+    color: var(--text-faint);
+    margin: 0.5rem 0 0;
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: 0.02em;
+  }
+  section {
+    margin-bottom: 3rem;
+  }
+  h2 {
+    font-family: 'Crimson Pro', Georgia, serif;
+    font-size: 1.5rem;
+    font-weight: 500;
+    margin: 0 0 1.25rem;
+    letter-spacing: -0.01em;
+    color: #f5f3ec;
+  }
+  .links-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 0.75rem;
+  }
+  .link-card {
+    display: block;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1rem 1.25rem;
+    text-decoration: none;
+    color: inherit;
+    transition: all 0.15s ease;
+  }
+  .link-card:hover {
+    border-color: var(--accent);
+    background: var(--surface-raised);
+    transform: translateY(-1px);
+  }
+  .link-card .kind {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin: 0 0 0.35rem;
+  }
+  .link-card .label {
+    font-size: 0.95rem;
+    font-weight: 500;
+    margin: 0;
+    color: var(--text);
+  }
+  .link-card:hover .label {
+    color: var(--accent);
+  }
+  .link-card .arrow {
+    display: inline-block;
+    transition: transform 0.15s ease;
+    margin-left: 0.25rem;
+  }
+  .link-card:hover .arrow {
+    transform: translateX(3px);
+  }
+  .schedule-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    font-size: 0.95rem;
+  }
+  .schedule-table thead {
+    background: var(--surface-raised);
+  }
+  .schedule-table th {
+    text-align: left;
+    padding: 0.85rem 1.25rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    border-bottom: 1px solid var(--border);
+  }
+  .schedule-table td {
+    padding: 0.95rem 1.25rem;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+  .schedule-table tr:last-child td {
+    border-bottom: none;
+  }
+  .schedule-table td:nth-child(2) {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.88rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+  .status {
+    display: inline-block;
+    font-size: 0.78rem;
+    font-weight: 500;
+    padding: 3px 10px;
+    border-radius: 3px;
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+  }
+  .status.done { background: var(--done-bg); color: var(--done-text); }
+  .status.progress { background: var(--progress-bg); color: var(--progress-text); }
+  .status.upcoming { background: var(--upcoming-bg); color: var(--upcoming-text); }
+  footer {
+    margin-top: 4rem;
+    padding-top: 2rem;
+    border-top: 1px solid var(--border);
+    text-align: center;
+    font-size: 0.85rem;
+    color: var(--text-faint);
+  }
+  footer a {
+    color: var(--text-muted);
+    text-decoration: none;
+    border-bottom: 1px solid var(--border-strong);
+    transition: color 0.15s ease, border-color 0.15s ease;
+  }
+  footer a:hover {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+  .claude-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 1.25rem;
+    padding: 0.4rem 0.9rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    color: var(--text-faint);
+    letter-spacing: 0.05em;
+  }
+  .claude-tag .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    display: inline-block;
+  }
+  .claude-tag a {
+    color: var(--text-muted);
+    text-decoration: none;
+    border: none;
+  }
+  .claude-tag a:hover {
+    color: var(--accent);
+  }
+  @media (max-width: 560px) {
+    .container { padding: 2.5rem 1.25rem 4rem; }
+    .schedule-table th:first-child,
+    .schedule-table td:first-child { padding-left: 1rem; }
+    .schedule-table th,
+    .schedule-table td { padding: 0.75rem 0.6rem; font-size: 0.85rem; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <p class="eyebrow">15-618 &middot; Final Project</p>
+    <h1>Parallel image inpainting</h1>
+    <p class="subtitle">Accelerating image inpainting algorithms with parallel computing</p>
+    <p class="authors">
+      Saileshwar Karthik<span class="separator">&middot;</span>Ayushi Bansal
+    </p>
+    <p class="affiliation">Carnegie Mellon University &middot; Spring 2026</p>
+  </header>
+
+  <section>
+    <h2>Links</h2>
+    <div class="links-grid">
+      <a class="link-card" href="https://docs.google.com/document/d/1SHlWeMfte05F6BTFgUYZfZQIznU-Wa7wOZKUN57yIpk/edit?usp=sharing" target="_blank" rel="noopener">
+        <p class="kind">Document</p>
+        <p class="label">Project Proposal<span class="arrow">&rarr;</span></p>
+      </a>
+      <a class="link-card" href="https://docs.google.com/document/d/1sF0vJjaKoKieEuUNr5cJDAL9kHcjwsS27u--XhSB6dg/edit?usp=sharing" target="_blank" rel="noopener">
+        <p class="kind">Document</p>
+        <p class="label">Milestone Report<span class="arrow">&rarr;</span></p>
+      </a>
+      <a class="link-card" href="https://github.com/AstroSkape/parallel-inpainting" target="_blank" rel="noopener">
+        <p class="kind">Repository</p>
+        <p class="label">Source Code<span class="arrow">&rarr;</span></p>
+      </a>
+    </div>
+  </section>
+
+  <section>
+    <h2>Schedule</h2>
+    <table class="schedule-table">
+      <thead>
+        <tr>
+          <th>Status</th>
+          <th>Deadline</th>
+          <th>Checkpoint</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="status done">Done</span></td>
+          <td>April 1</td>
+          <td>Project setup and literature survey</td>
+        </tr>
+        <tr>
+          <td><span class="status done">Done</span></td>
+          <td>April 8</td>
+          <td>Sequential implementation</td>
+        </tr>
+        <tr>
+          <td><span class="status done">Done</span></td>
+          <td>April 15</td>
+          <td>Project milestone</td>
+        </tr>
+        <tr>
+          <td><span class="status progress">Done</span></td>
+          <td>April 21</td>
+          <td>Parallelization with OpenMP</td>
+        </tr>
+        <tr>
+          <td><span class="status upcoming">In Progress</span></td>
+          <td>April 30</td>
+          <td>Final report preparation</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <footer>
+    <p>
+      <a href="https://github.com/AstroSkape/parallel-inpainting">View on GitHub</a>
+    </p>
+    <div class="claude-tag">
+      <span class="dot"></span>
+      <span>Designed by <a href="https://claude.ai" target="_blank" rel="noopener">Claude</a></span>
+    </div>
+  </footer>
+
+</div>
+</body>
+</html>

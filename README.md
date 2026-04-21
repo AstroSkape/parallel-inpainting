@@ -1,19 +1,43 @@
-## 15-618 Final Project
+## Setup
 
-Saileshwar Karthik, Ayushi Bansal
+1. Install OpenCV:
+   - **macOS:** `brew install opencv`
+   - **Linux:** `sudo apt install libopencv-dev`
 
-### [Project Proposal](https://docs.google.com/document/d/1SHlWeMfte05F6BTFgUYZfZQIznU-Wa7wOZKUN57yIpk/edit?usp=sharing)
+2. Build:
+   ```bash
+   mkdir build
+   cd build && cmake .. && make
+   ```
 
-### [Milestone Report](https://docs.google.com/document/d/1sF0vJjaKoKieEuUNr5cJDAL9kHcjwsS27u--XhSB6dg/edit?usp=sharing)
+3. Run:
+   ```bash
+   ./inpaint
+   ```
 
-### [Code](https://github.com/AstroSkape/parallel-inpainting)
+## OpenCV Configuration on GHC / CMU AFS
 
-### Schedule
+Install OpenCV
+```
+wget -O opencv.zip https://github.com/opencv/opencv/archive/4.9.0.zip
+unzip opencv.zip && mkdir -p opencv-build && cd opencv-build
+cmake ../opencv-4.9.0 \
+  -DCMAKE_INSTALL_PREFIX=$HOME/local \
+  -DBUILD_TESTS=OFF \
+  -DBUILD_EXAMPLES=OFF \
+  -DBUILD_DOCS=OFF
+make -j$(nproc)
+make install
+```
 
-| Status | Deadline | Checkpoint |
-|--------|------|------------|
-| Done | April 1 | Project Setup and Literature Survey |
-| Done | April 8  | Sequential Implementation |
-| Done | April 15  | Project Milestone |
-| In Progress | April 21 | Parallelization with OpenMP |
-|  | April 30 | Final Report Preparation |
+Finally delete all files created
+``` cd ~ && rm -rf opencv-build opencv-4.9.0 opencv.zip ```
+
+Add this to ~/.bashrc to persist it.
+```export LD_LIBRARY_PATH=$HOME/local/lib:$LD_LIBRARY_PATH```
+
+
+## References
+
+https://github.com/younesse-cv/PatchMatch
+https://github.com/vacancy/PyPatchMatch

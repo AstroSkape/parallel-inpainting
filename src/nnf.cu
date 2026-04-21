@@ -75,12 +75,6 @@ void CudaNNFDeviceBuffers::ensure_t2s_fields(int tgt_pixels) {
 void CudaNNFDeviceBuffers::allocate_device_buffers(int src_pixels,
 												   int tgt_pixels,
 												   bool need_gmask) {
-	// if (src_pixels > src_bufs.pixel_capacity) {
-	// 	if (field_ptr)
-	// 		cudaCheckError(cudaFree(field_ptr));
-	// 	cudaCheckError(cudaMalloc(&field_ptr, src_pixels * 3 * sizeof(int)));
-	// }
-
 	src_bufs.allocate_buffers(src_pixels, need_gmask);
 	tgt_bufs.allocate_buffers(tgt_pixels, need_gmask);
 	ensure_s2t_fields(src_pixels);
@@ -173,6 +167,23 @@ compute_patch_dist(const unsigned char *src_img, const unsigned char *tgt_img,
 	if (res < 0 || res > kDistanceScale)
 		return kDistanceScale;
 	return res;
+}
+
+/**
+ * Copies the image host buffers to the device
+ */
+static void upload_image_buffers_to_device(DeviceImageBuffers &d_bufs,
+										   const HostImageBuffers &h_bufs,
+										   bool has_gmask)
+{
+	int size = h_bufs.height * h_bufs.width;
+	cudaCheckError(cudaMemcpy(d_bufs.img, h_bufs.img, size * 3, cudaMemcpyHostToDevice));
+	cudaCheckError(cudaMemcpy(d_bufs.gx, h_bufs.gx, size * 3, cudaMemcpyHostToDevice));
+	cudaCheckError(cudaMemcpy(d_bufs.gy, h_bufs.gy, size * 3, cudaMemcpyHostToDevice));
+	cudaCheckError(cudaMemcpy(d_bufs.mask, h_bufs.mask, size, cudaMemcpyHostToDevice));
+	if (has_gmask) {
+		cudaCheckError(cudaMemcpy(d_bufs.gmask, h_bufs.gmask, size, cudaMemcpyHostToDevice));
+	}
 }
 
 __global__ void nnf_jump_flood_kernel(
@@ -362,7 +373,6 @@ extern "C" void launch_nnf_minimize(
 	bool has_gmask, int patch_size, int nr_pass, unsigned int random_seed) {
 
 	int src_size = src.height * src.width;
-	int tgt_size = tgt.height * tgt.width;
 
 	// Timing setup
 	cudaEvent_t t0, t1, t2, t3;
@@ -373,29 +383,8 @@ extern "C" void launch_nnf_minimize(
 
 	cudaEventRecord(t0);
 
-	// copy from host to device
-	cudaCheckError(cudaMemcpy(bufs->src_bufs.img, src.img, src_size * 3,
-							  cudaMemcpyHostToDevice));
-	cudaCheckError(cudaMemcpy(bufs->tgt_bufs.img, tgt.img, tgt_size * 3,
-							  cudaMemcpyHostToDevice));
-	cudaCheckError(cudaMemcpy(bufs->src_bufs.gx, src.gx, src_size * 3,
-							  cudaMemcpyHostToDevice));
-	cudaCheckError(cudaMemcpy(bufs->src_bufs.gy, src.gy, src_size * 3,
-							  cudaMemcpyHostToDevice));
-	cudaCheckError(cudaMemcpy(bufs->tgt_bufs.gx, tgt.gx, tgt_size * 3,
-							  cudaMemcpyHostToDevice));
-	cudaCheckError(cudaMemcpy(bufs->tgt_bufs.gy, tgt.gy, tgt_size * 3,
-							  cudaMemcpyHostToDevice));
-	cudaCheckError(cudaMemcpy(bufs->src_bufs.mask, src.mask, src_size,
-							  cudaMemcpyHostToDevice));
-	cudaCheckError(cudaMemcpy(bufs->tgt_bufs.mask, tgt.mask, tgt_size,
-							  cudaMemcpyHostToDevice));
-	if (has_gmask) {
-		cudaCheckError(cudaMemcpy(bufs->src_bufs.gmask, src.gmask, src_size,
-								  cudaMemcpyHostToDevice));
-		cudaCheckError(cudaMemcpy(bufs->tgt_bufs.gmask, tgt.gmask, tgt_size,
-								  cudaMemcpyHostToDevice));
-	}
+	upload_image_buffers_to_device(bufs->src_bufs, src, has_gmask);
+	upload_image_buffers_to_device(bufs->tgt_bufs, tgt, has_gmask);
 
 	cudaEventRecord(t1);
 
@@ -568,30 +557,9 @@ launch_nnf_randomize(CudaNNFDeviceBuffers *bufs, int *d_field_ptr,
 					 unsigned int seed) {
 
 	int src_size = src.height * src.width;
-	int tgt_size = tgt.height * tgt.width;
 
-	cudaCheckError(cudaMemcpy(bufs->src_bufs.img, src.img, src_size * 3,
-							  cudaMemcpyHostToDevice));
-	cudaCheckError(cudaMemcpy(bufs->tgt_bufs.img, tgt.img, tgt_size * 3,
-							  cudaMemcpyHostToDevice));
-	cudaCheckError(cudaMemcpy(bufs->src_bufs.gx, src.gx, src_size * 3,
-							  cudaMemcpyHostToDevice));
-	cudaCheckError(cudaMemcpy(bufs->src_bufs.gy, src.gy, src_size * 3,
-							  cudaMemcpyHostToDevice));
-	cudaCheckError(cudaMemcpy(bufs->tgt_bufs.gx, tgt.gx, tgt_size * 3,
-							  cudaMemcpyHostToDevice));
-	cudaCheckError(cudaMemcpy(bufs->tgt_bufs.gy, tgt.gy, tgt_size * 3,
-							  cudaMemcpyHostToDevice));
-	cudaCheckError(cudaMemcpy(bufs->src_bufs.mask, src.mask, src_size,
-							  cudaMemcpyHostToDevice));
-	cudaCheckError(cudaMemcpy(bufs->tgt_bufs.mask, tgt.mask, tgt_size,
-							  cudaMemcpyHostToDevice));
-	if (has_gmask) {
-		cudaCheckError(cudaMemcpy(bufs->src_bufs.gmask, src.gmask, src_size,
-								  cudaMemcpyHostToDevice));
-		cudaCheckError(cudaMemcpy(bufs->tgt_bufs.gmask, tgt.gmask, tgt_size,
-								  cudaMemcpyHostToDevice));
-	}
+	upload_image_buffers_to_device(bufs->src_bufs, src, has_gmask);
+	upload_image_buffers_to_device(bufs->tgt_bufs, tgt, has_gmask);
 
 	int num_threads = 256;
 	int blocks = (src_size + num_threads - 1) / num_threads;
@@ -611,30 +579,9 @@ extern "C" void launch_nnf_initialize_from(
 	unsigned int seed) {
 
 	int src_size = src.height * src.width;
-	int tgt_size = tgt.height * tgt.width;
 
-	cudaCheckError(cudaMemcpy(bufs->src_bufs.img, src.img, src_size * 3,
-							  cudaMemcpyHostToDevice));
-	cudaCheckError(cudaMemcpy(bufs->tgt_bufs.img, tgt.img, tgt_size * 3,
-							  cudaMemcpyHostToDevice));
-	cudaCheckError(cudaMemcpy(bufs->src_bufs.gx, src.gx, src_size * 3,
-							  cudaMemcpyHostToDevice));
-	cudaCheckError(cudaMemcpy(bufs->src_bufs.gy, src.gy, src_size * 3,
-							  cudaMemcpyHostToDevice));
-	cudaCheckError(cudaMemcpy(bufs->tgt_bufs.gx, tgt.gx, tgt_size * 3,
-							  cudaMemcpyHostToDevice));
-	cudaCheckError(cudaMemcpy(bufs->tgt_bufs.gy, tgt.gy, tgt_size * 3,
-							  cudaMemcpyHostToDevice));
-	cudaCheckError(cudaMemcpy(bufs->src_bufs.mask, src.mask, src_size,
-							  cudaMemcpyHostToDevice));
-	cudaCheckError(cudaMemcpy(bufs->tgt_bufs.mask, tgt.mask, tgt_size,
-							  cudaMemcpyHostToDevice));
-	if (has_gmask) {
-		cudaCheckError(cudaMemcpy(bufs->src_bufs.gmask, src.gmask, src_size,
-								  cudaMemcpyHostToDevice));
-		cudaCheckError(cudaMemcpy(bufs->tgt_bufs.gmask, tgt.gmask, tgt_size,
-								  cudaMemcpyHostToDevice));
-	}
+	upload_image_buffers_to_device(bufs->src_bufs, src, has_gmask);
+	upload_image_buffers_to_device(bufs->tgt_bufs, tgt, has_gmask);
 
 	int num_threads = 256;
 	int blocks = (src_size + num_threads - 1) / num_threads;

@@ -2,12 +2,10 @@
 #include "../include/inpaint.h"
 #include "../include/nnf.h"
 
-extern "C" void launch_nnf_minimize(CudaNNFDeviceBuffers *bufs,
-									int *device_field_ptr, int *field_ptr,
-									const HostImageBuffers &src,
-									const HostImageBuffers &tgt, bool has_gmask,
-									int patch_size, int nr_pass,
-									unsigned int random_seed);
+extern "C" void launch_nnf_minimize(
+	CudaNNFDeviceBuffers *bufs, int *d_field_ptr, int *d_field_scratch,
+	int *h_field_ptr, const HostImageBuffers &src, const HostImageBuffers &tgt,
+	bool has_gmask, int patch_size, int nr_pass, unsigned int random_seed);
 
 extern "C" void
 launch_nnf_randomize(CudaNNFDeviceBuffers *bufs, int *d_field_ptr,
@@ -28,7 +26,8 @@ extern "C" void launch_nnf_set_identity(CudaNNFDeviceBuffers *bufs,
 
 void NearestNeighborField::minimize_cuda(int nr_pass,
 										 CudaNNFDeviceBuffers *bufs,
-										 int *d_field_ptr) {
+										 int *d_field_ptr,
+										 int *d_field_scratch) {
 	m_source.compute_image_gradients();
 	m_target.compute_image_gradients();
 
@@ -58,8 +57,9 @@ void NearestNeighborField::minimize_cuda(int nr_pass,
 		tgt_size.width,
 	};
 
-	launch_nnf_minimize(bufs, d_field_ptr, m_field.ptr<int>(0, 0), src, tgt,
-						has_gmask, m_distance_metric->patch_size(), nr_pass,
+	launch_nnf_minimize(bufs, d_field_ptr, d_field_scratch,
+						m_field.ptr<int>(0, 0), src, tgt, has_gmask,
+						m_distance_metric->patch_size(), nr_pass,
 						(unsigned int)rand());
 }
 

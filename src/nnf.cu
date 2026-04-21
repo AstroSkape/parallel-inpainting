@@ -176,13 +176,13 @@ compute_patch_dist(const unsigned char *src_img, const unsigned char *tgt_img,
 }
 
 __global__ void nnf_jump_flood_kernel(
-	int *field, const unsigned char *src_img, const unsigned char *tgt_img,
-	const unsigned char *src_gx, const unsigned char *src_gy,
-	const unsigned char *tgt_gx, const unsigned char *tgt_gy,
-	const unsigned char *src_mask, const unsigned char *tgt_mask,
-	const unsigned char *src_gmask, const unsigned char *tgt_gmask,
-	bool has_gmask, int src_h, int src_w, int tgt_h, int tgt_w, int patch_size,
-	unsigned int seed) {
+	const int *field_in, int *field_out, const unsigned char *src_img,
+	const unsigned char *tgt_img, const unsigned char *src_gx,
+	const unsigned char *src_gy, const unsigned char *tgt_gx,
+	const unsigned char *tgt_gy, const unsigned char *src_mask,
+	const unsigned char *tgt_mask, const unsigned char *src_gmask,
+	const unsigned char *tgt_gmask, bool has_gmask, int src_h, int src_w,
+	int tgt_h, int tgt_w, int patch_size, unsigned int seed, int jump) {
 
 	int idx = blockIdx.x * blockDim.x + threadIdx.x;
 	if (idx >= src_h * src_w)
@@ -194,77 +194,76 @@ __global__ void nnf_jump_flood_kernel(
 	if (has_gmask && src_gmask[p_y * src_w + p_x])
 		return;
 
-	int *nnf_field = field + idx * 3;
-	int best_y = nnf_field[0];
-	int best_x = nnf_field[1];
-	int best_d = nnf_field[2];
+	const int *nnf_in = field_in + idx * 3;
+	int *nnf_out = field_out + idx * 3;
+
+	int best_y = nnf_in[0];
+	int best_x = nnf_in[1];
+	int best_d = nnf_in[2];
 
 	unsigned int step = 0;
-	const int jumps[8] = {8, 4, 2, 1, 2, 1};
+
+	const int directions[8][2] = {{-jump, 0},	 {-jump, -jump}, {0, -jump},
+								  {jump, -jump}, {jump, 0},		 {jump, jump},
+								  {0, jump},	 {-jump, jump}};
+
+	// propagate information at this jump distance
 	for (int i = 0; i < 8; i++) {
-		int jump = jumps[i];
-		const int directions[4][2] = {
-			{-jump, 0}, {0, jump}, {jump, jump}, {-jump, -jump}};
+		int newy = p_y + directions[i][0];
+		int newx = p_x + directions[i][1];
 
-		// propagate information at this jump distance
-		for (int i = 0; i < 4; i++) {
-			int newy = p_y + directions[i][0];
-			int newx = p_x + directions[i][1];
+		if (newy < 0 || newy >= src_h || newx < 0 || newx >= src_w)
+			continue;
+		if (has_gmask && src_gmask[newy * src_w + newx])
+			continue;
 
-			if (newy < 0 || newy >= src_h || newx < 0 || newx >= src_w)
-				continue;
-			if (has_gmask && src_gmask[newy * src_w + newx])
-				continue;
+		const int *neighbor_field = field_in + (newy * src_w + newx) * 3;
+		int candidate_y =
+			device_clamp(neighbor_field[0] - directions[i][0], 0, tgt_h - 1);
+		int candidate_x =
+			device_clamp(neighbor_field[1] - directions[i][1], 0, tgt_w - 1);
 
-			const int *neighbor_field = field + (newy * src_w + newx) * 3;
-			int candidate_y = device_clamp(neighbor_field[0] - directions[i][0],
-										   0, tgt_h - 1);
-			int candidate_x = device_clamp(neighbor_field[1] - directions[i][1],
-										   0, tgt_w - 1);
-
-			int computed_dist = compute_patch_dist(
-				src_img, tgt_img, src_gx, src_gy, tgt_gx, tgt_gy, src_mask,
-				tgt_mask, src_gmask, tgt_gmask, has_gmask, p_y, p_x,
-				candidate_y, candidate_x, src_h, src_w, tgt_h, tgt_w,
-				patch_size);
-			if (computed_dist < best_d) {
-				best_x = newx;
-				best_y = newy;
-				best_d = computed_dist;
-			}
-		}
-
-		// random search
-		int random_scale = (min(tgt_h, tgt_w) - 1) / 2;
-		while (random_scale > 0) {
-			unsigned int s_base = seed + idx * 1337u + step * 7919u;
-			int dy_off = rand_range(s_base, -random_scale, random_scale);
-			int dx_off =
-				rand_range(s_base + 2654435761u, -random_scale, random_scale);
-
-			int yp = device_clamp(best_y + dy_off, 0, tgt_h - 1);
-			int xp = device_clamp(best_x + dx_off, 0, tgt_w - 1);
-
-			if (!(has_gmask && tgt_gmask[yp * tgt_w + xp])) {
-				int d = compute_patch_dist(
-					src_img, tgt_img, src_gx, src_gy, tgt_gx, tgt_gy, src_mask,
-					tgt_mask, src_gmask, tgt_gmask, has_gmask, p_y, p_x, yp, xp,
-					src_h, src_w, tgt_h, tgt_w, patch_size);
-				if (d < best_d) {
-					best_y = yp;
-					best_x = xp;
-					best_d = d;
-				}
-			}
-
-			random_scale >>= 1;
-			step++;
+		int computed_dist = compute_patch_dist(
+			src_img, tgt_img, src_gx, src_gy, tgt_gx, tgt_gy, src_mask,
+			tgt_mask, src_gmask, tgt_gmask, has_gmask, p_y, p_x, candidate_y,
+			candidate_x, src_h, src_w, tgt_h, tgt_w, patch_size);
+		if (computed_dist < best_d) {
+			best_x = candidate_x;
+			best_y = candidate_y;
+			best_d = computed_dist;
 		}
 	}
 
-	nnf_field[0] = best_y;
-	nnf_field[1] = best_x;
-	nnf_field[2] = best_d;
+	// random search
+	int random_scale = (min(tgt_h, tgt_w) - 1) / 2;
+	while (random_scale > 0) {
+		unsigned int s_base = seed + idx * 1337u + step * 7919u;
+		int dy_off = rand_range(s_base, -random_scale, random_scale);
+		int dx_off =
+			rand_range(s_base + 2654435761u, -random_scale, random_scale);
+
+		int yp = device_clamp(best_y + dy_off, 0, tgt_h - 1);
+		int xp = device_clamp(best_x + dx_off, 0, tgt_w - 1);
+
+		if (!(has_gmask && tgt_gmask[yp * tgt_w + xp])) {
+			int d = compute_patch_dist(src_img, tgt_img, src_gx, src_gy, tgt_gx,
+									   tgt_gy, src_mask, tgt_mask, src_gmask,
+									   tgt_gmask, has_gmask, p_y, p_x, yp, xp,
+									   src_h, src_w, tgt_h, tgt_w, patch_size);
+			if (d < best_d) {
+				best_y = yp;
+				best_x = xp;
+				best_d = d;
+			}
+		}
+
+		random_scale >>= 1;
+		step++;
+	}
+
+	nnf_out[0] = best_y;
+	nnf_out[1] = best_x;
+	nnf_out[2] = best_d;
 }
 
 __global__ void nnf_minimize_kernel(
@@ -331,7 +330,7 @@ __global__ void nnf_minimize_kernel(
 											 -random_scale, random_scale),
 							  0, tgt_h - 1);
 		int xp = device_clamp(nnf_best_x +
-								  rand_range(seed + idx * 1337u + step * 7919u,
+								  rand_range(seed + idx * 7919u + step * 1337u,
 											 -random_scale, random_scale),
 							  0, tgt_w - 1);
 
@@ -357,12 +356,10 @@ __global__ void nnf_minimize_kernel(
 	nnf_field[2] = nnf_best_d;
 }
 
-extern "C" void launch_nnf_minimize(CudaNNFDeviceBuffers *bufs,
-									int *d_field_ptr, int *h_field_ptr,
-									const HostImageBuffers &src,
-									const HostImageBuffers &tgt, bool has_gmask,
-									int patch_size, int nr_pass,
-									unsigned int random_seed) {
+extern "C" void launch_nnf_minimize(
+	CudaNNFDeviceBuffers *bufs, int *d_field_ptr, int *d_field_scratch,
+	int *h_field_ptr, const HostImageBuffers &src, const HostImageBuffers &tgt,
+	bool has_gmask, int patch_size, int nr_pass, unsigned int random_seed) {
 
 	int src_size = src.height * src.width;
 	int tgt_size = tgt.height * tgt.width;
@@ -405,17 +402,35 @@ extern "C" void launch_nnf_minimize(CudaNNFDeviceBuffers *bufs,
 	int num_threads = 256;
 	int blocks = (src_size + num_threads - 1) / num_threads;
 
+	const int jumps[6] = {8, 4, 2, 1, 2, 1};
+	int *in_ptr = d_field_ptr;
+	int *out_ptr = d_field_scratch;
+
 	// LOG("[CUDA] Number of blocks: %d\n", blocks);
 
 	for (int i = 0; i < nr_pass; i++) {
-		unsigned int seed = random_seed + i * 12345u;
+		for (int ji = 0; ji < 6; ji++) {
+			unsigned int seed = random_seed + i * 12345u;
 
-		nnf_jump_flood_kernel<<<blocks, num_threads>>>(
-			d_field_ptr, bufs->src_bufs.img, bufs->tgt_bufs.img,
-			bufs->src_bufs.gx, bufs->src_bufs.gy, bufs->tgt_bufs.gx,
-			bufs->tgt_bufs.gy, bufs->src_bufs.mask, bufs->tgt_bufs.mask,
-			bufs->src_bufs.gmask, bufs->tgt_bufs.gmask, has_gmask, src.height,
-			src.width, tgt.height, tgt.width, patch_size, seed);
+			nnf_jump_flood_kernel<<<blocks, num_threads>>>(
+				in_ptr, out_ptr, bufs->src_bufs.img, bufs->tgt_bufs.img,
+				bufs->src_bufs.gx, bufs->src_bufs.gy, bufs->tgt_bufs.gx,
+				bufs->tgt_bufs.gy, bufs->src_bufs.mask, bufs->tgt_bufs.mask,
+				bufs->src_bufs.gmask, bufs->tgt_bufs.gmask, has_gmask,
+				src.height, src.width, tgt.height, tgt.width, patch_size, seed,
+				jumps[ji]);
+
+			// swap buffers
+			int *tmp = in_ptr;
+			in_ptr = out_ptr;
+			out_ptr = tmp;
+		}
+	}
+
+	if (in_ptr != d_field_ptr) {
+		cudaCheckError(cudaMemcpy(d_field_ptr, in_ptr,
+								  src_size * 3 * sizeof(int),
+								  cudaMemcpyDeviceToDevice));
 	}
 
 	cudaEventRecord(t2);
@@ -642,9 +657,8 @@ extern "C" void launch_nnf_initialize_from(
 }
 
 __device__ bool d_is_patch_masked(const unsigned char *mask,
-									   const unsigned char *gmask,
-									   bool has_gmask, int y, int x, int h,
-									   int w, int patch_size) {
+								  const unsigned char *gmask, bool has_gmask,
+								  int y, int x, int h, int w, int patch_size) {
 
 	for (int dy = -patch_size; dy <= patch_size; dy++) {
 		for (int dx = -patch_size; dx <= patch_size; dx++) {
@@ -672,14 +686,14 @@ __global__ void nnf_set_identity_kernel(int *field, const unsigned char *mask,
 
 	if (has_gmask && gmask[idx])
 		return;
-	
-	if (!d_is_patch_masked(mask, gmask, has_gmask,
-                              y, x, src_h, src_w, patch_size)) {
-        int *nnf_field = field + idx * 3;
-        nnf_field[0] = y;
-        nnf_field[1] = x;
-        nnf_field[2] = 0;
-    }
+
+	if (!d_is_patch_masked(mask, gmask, has_gmask, y, x, src_h, src_w,
+						   patch_size)) {
+		int *nnf_field = field + idx * 3;
+		nnf_field[0] = y;
+		nnf_field[1] = x;
+		nnf_field[2] = 0;
+	}
 }
 
 extern "C" void launch_nnf_set_identity(CudaNNFDeviceBuffers *bufs,

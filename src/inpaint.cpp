@@ -251,8 +251,8 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 			// 		tgt_size.height * tgt_size.width,
 			// 		!source.global_mask().empty());
 			// }
-			m_source2target.minimize(gpu_nnf_iters, true, &m_cuda_buffers, m_cuda_buffers.s2t_curr);
-			m_target2source.minimize(gpu_nnf_iters, true, &m_cuda_buffers, m_cuda_buffers.t2s_curr);
+			m_source2target.minimize(gpu_nnf_iters, true, &m_cuda_buffers, m_cuda_buffers.s2t_curr, m_cuda_buffers.s2t_prev);
+			m_target2source.minimize(gpu_nnf_iters, true, &m_cuda_buffers, m_cuda_buffers.t2s_curr, m_cuda_buffers.t2s_prev);
 		} else {
 			m_source2target.minimize(nr_iters_nnf, false);
 			m_target2source.minimize(nr_iters_nnf, false);

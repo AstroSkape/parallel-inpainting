@@ -1,4 +1,4 @@
-#include "../include/masked_image.h"
+#include "masked_image.h"
 
 const cv::Size MaskedImage::kDownsampleKernelSize = cv::Size(6, 6);
 const int MaskedImage::kDownsampleKernel[6] = {1, 5, 10, 10, 5, 1};

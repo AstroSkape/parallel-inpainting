@@ -2,9 +2,9 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
-#include "../include/CycleTimer.h"
-#include "../include/cuda_helpers.h"
-#include "../include/inpaint.h"
+#include "CycleTimer.h"
+#include "cuda_helpers.h"
+#include "inpaint.h"
 #include "masked_image.h"
 #include <iostream>
 

@@ -1,8 +1,8 @@
 #include <algorithm>
 #include <cmath>
 
-#include "../include/masked_image.h"
-#include "../include/nnf.h"
+#include "masked_image.h"
+#include "nnf.h"
 
 /**
  * Nearest-Neighbor Field (see PatchMatch algorithm).

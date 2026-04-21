@@ -1,6 +1,6 @@
-#include "../include/cuda_helpers.h"
-#include "../include/inpaint.h"
-#include "../include/nnf.h"
+#include "cuda_helpers.h"
+#include "inpaint.h"
+#include "nnf.h"
 
 extern "C" void launch_nnf_minimize(
 	CudaNNFDeviceBuffers *bufs, int *d_field_ptr, int *d_field_scratch,

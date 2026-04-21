@@ -1,8 +1,8 @@
 #include <cstddef>
 #include <iostream>
 
-#include "../include/inpaint.h"
-#include "../include/CycleTimer.h"
+#include "inpaint.h"
+#include "CycleTimer.h"
 
 using namespace std;
 
@@ -46,7 +46,7 @@ double getExecutionTime(bool is_gpu_enabled, cv::Mat &imageWithHole, cv::Mat &ma
 int main()
 {
     // read image
-    cv::Mat prunedImg = cv::imread("../images/lion_masked.jpg", cv::IMREAD_COLOR);
+    cv::Mat prunedImg = cv::imread("../images/forest_pruned.bmp", cv::IMREAD_COLOR);
     auto mask = createMask(prunedImg);
     auto metric = PatchSSDDistanceMetric(3);
 

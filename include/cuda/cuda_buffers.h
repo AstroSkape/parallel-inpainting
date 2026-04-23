@@ -1,6 +1,7 @@
 #pragma once
 #define DEBUG
 
+#include <cuda_runtime.h>
 void cuda_device_sync();
 
 #ifdef DEBUG
@@ -9,22 +10,37 @@ void cuda_device_sync();
 #define LOG(fmt, ...)
 #endif
 
+struct __align__(16) PixelData {
+	uchar3 rgb;
+	uchar3 gx;
+	uchar3 gy;
+	unsigned char mask;
+	unsigned char gmask;
+	unsigned char padding[5];
+};
+
 struct HostImageBuffers {
-	const unsigned char *img;
-	const unsigned char *gx;
-	const unsigned char *gy;
-	const unsigned char *mask;
-	const unsigned char *gmask;
+	// const unsigned char *img;
+	// const unsigned char *gx;
+	// const unsigned char *gy;
+	// const unsigned char *mask;
+	// const unsigned char *gmask;
+	PixelData *data = nullptr;
 	int height;
 	int width;
+	void pack_pixel_data_from(const unsigned char *img, const unsigned char *gx,
+				   const unsigned char *gy, const unsigned char *mask,
+				   const unsigned char *gmask, int pixels);
+	void free_pixel_data();
 };
 
 struct DeviceImageBuffers {
-	unsigned char *img = nullptr;
-	unsigned char *gx = nullptr;
-	unsigned char *gy = nullptr;
-	unsigned char *mask = nullptr;
-	unsigned char *gmask = nullptr;
+	// unsigned char *img = nullptr;
+	// unsigned char *gx = nullptr;
+	// unsigned char *gy = nullptr;
+	// unsigned char *mask = nullptr;
+	// unsigned char *gmask = nullptr;
+	PixelData *data = nullptr;
 
 	int pixel_capacity = 0;
 

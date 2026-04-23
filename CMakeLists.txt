@@ -4,6 +4,7 @@ set(CMAKE_CXX_COMPILER "g++-11")
 set(CMAKE_CUDA_HOST_COMPILER "g++-11")
 
 project(ParallelInpainting LANGUAGES CXX CUDA)
+find_package(CUDAToolkit REQUIRED)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CUDA_STANDARD 17)
@@ -22,4 +23,4 @@ include_directories(${OpenCV_INCLUDE_DIRS} include)
 
 add_executable(inpaint src/app/main.cpp src/patchmatch/inpaint.cpp src/patchmatch/masked_image.cpp src/patchmatch/nnf.cpp src/cuda/nnf_kernels.cu src/cuda/cuda.cpp src/cuda/cuda_helpers.cu)
 
-target_link_libraries(inpaint ${OpenCV_LIBS} OpenMP::OpenMP_CXX)
+target_link_libraries(inpaint ${OpenCV_LIBS} OpenMP::OpenMP_CXX CUDA::cudart)

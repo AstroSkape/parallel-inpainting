@@ -1,31 +1,62 @@
 #include "cuda/cuda_buffers.h"
+#include "cuda/nnf_cuda.h"
 #include "patchmatch/inpaint.h"
 #include "patchmatch/nnf.h"
-#include "cuda/nnf_cuda.h"
 
+std::vector<PixelData>
+NearestNeighborField::_pack_pixel_data(const MaskedImage &img,
+									   bool include_pixels) const {
 
-HostImageBuffers NearestNeighborField::_make_host_buffers(const MaskedImage &img,
-										bool include_pixels) const {
-    cv::Size size = img.size();
+	auto size = img.size();
+	int num_pixels = size.height * size.width;
+	bool has_gmask = !img.global_mask().empty();
 
-	bool has_gmask =
-		!img.global_mask().empty() && !img.global_mask().empty();
+	std::vector<PixelData> buf(num_pixels);
 
-	HostImageBuffers buf;
-	buf.height = size.height;
-	buf.width = size.width;
-	buf.mask = img.mask().ptr<unsigned char>(0, 0);
-	buf.gmask = has_gmask ? img.global_mask().ptr<unsigned char>(0, 0) : nullptr;
+	const unsigned char *mask_ptr = img.mask().ptr<unsigned char>(0, 0);
+	const unsigned char *gmask_ptr =
+		has_gmask ? img.global_mask().ptr<unsigned char>(0, 0) : nullptr;
+
+	const unsigned char *img_ptr = nullptr;
+	const unsigned char *gx_ptr = nullptr;
+	const unsigned char *gy_ptr = nullptr;
 
 	if (include_pixels) {
 		img.compute_image_gradients();
-		buf.img = img.image().ptr<unsigned char>(0, 0);
-		buf.gx = img.gradx().ptr<unsigned char>(0, 0);
-		buf.gy = img.grady().ptr<unsigned char>(0, 0);
+		img_ptr = img.image().ptr<unsigned char>(0, 0);
+		gx_ptr = img.gradx().ptr<unsigned char>(0, 0);
+		gy_ptr = img.grady().ptr<unsigned char>(0, 0);
 	}
+
+	for (int i = 0; i < num_pixels; i++) {
+		PixelData &p = buf[i];
+		memset(&p, 0, sizeof(PixelData));
+
+		p.mask = mask_ptr[i];
+		p.gmask = gmask_ptr ? gmask_ptr[i] : 0;
+
+		if (include_pixels) {
+			p.rgb = make_uchar3(img_ptr[i * 3], img_ptr[i * 3 + 1],
+								img_ptr[i * 3 + 2]);
+			p.gx = make_uchar3(gx_ptr[i * 3], gx_ptr[i * 3 + 1],
+							   gx_ptr[i * 3 + 2]);
+			p.gy = make_uchar3(gy_ptr[i * 3], gy_ptr[i * 3 + 1],
+							   gy_ptr[i * 3 + 2]);
+		}
+	}
+
 	return buf;
 }
 
+HostImageBuffers
+NearestNeighborField::_make_host_buffers(std::vector<PixelData> &packed,
+										 const MaskedImage &img) const {
+	HostImageBuffers buf;
+	buf.data = packed.data();
+	buf.height = img.size().height;
+	buf.width = img.size().width;
+	return buf;
+}
 
 void NearestNeighborField::minimize_cuda(int nr_pass,
 										 CudaNNFDeviceBuffers *bufs,
@@ -35,8 +66,11 @@ void NearestNeighborField::minimize_cuda(int nr_pass,
 		!m_source.global_mask().empty() && !m_target.global_mask().empty();
 
 	bool include_pixels = true;
-	HostImageBuffers src = _make_host_buffers(m_source, include_pixels);
-	HostImageBuffers tgt = _make_host_buffers(m_target, include_pixels);
+	auto src_packed = _pack_pixel_data(m_source, include_pixels);
+	auto tgt_packed = _pack_pixel_data(m_target, include_pixels);
+
+	HostImageBuffers src = _make_host_buffers(src_packed, m_source);
+	HostImageBuffers tgt = _make_host_buffers(tgt_packed, m_target);
 
 	launch_nnf_minimize(bufs, d_field_ptr, d_field_scratch,
 						m_field.ptr<int>(0, 0), src, tgt, has_gmask,
@@ -52,8 +86,11 @@ void NearestNeighborField::initialize_cuda_randomize(CudaNNFDeviceBuffers *bufs,
 		!m_source.global_mask().empty() && !m_target.global_mask().empty();
 
 	bool include_pixels = true;
-	HostImageBuffers src = _make_host_buffers(m_source, include_pixels);
-	HostImageBuffers tgt = _make_host_buffers(m_target, include_pixels);
+	auto src_packed = _pack_pixel_data(m_source, include_pixels);
+	auto tgt_packed = _pack_pixel_data(m_target, include_pixels);
+
+	HostImageBuffers src = _make_host_buffers(src_packed, m_source);
+	HostImageBuffers tgt = _make_host_buffers(tgt_packed, m_target);
 
 	launch_nnf_randomize(bufs, d_field_ptr, src, tgt, has_gmask,
 						 m_distance_metric->patch_size(), max_retry, true,
@@ -69,8 +106,11 @@ void NearestNeighborField::initialize_cuda_from(
 		!m_source.global_mask().empty() && !m_target.global_mask().empty();
 
 	bool include_pixels = true;
-	HostImageBuffers src = _make_host_buffers(m_source, include_pixels);
-	HostImageBuffers tgt = _make_host_buffers(m_target, include_pixels);
+	auto src_packed = _pack_pixel_data(m_source, include_pixels);
+	auto tgt_packed = _pack_pixel_data(m_target, include_pixels);
+
+	HostImageBuffers src = _make_host_buffers(src_packed, m_source);
+	HostImageBuffers tgt = _make_host_buffers(tgt_packed, m_target);
 
 	launch_nnf_initialize_from(
 		bufs, d_field_ptr, other_d_field_ptr, src, tgt,
@@ -83,8 +123,8 @@ void NearestNeighborField::set_identity_cuda(CudaNNFDeviceBuffers *bufs,
 											 const MaskedImage &mask_source) {
 	bool has_gmask = !m_source.global_mask().empty();
 
-	HostImageBuffers src =
-		_make_host_buffers(mask_source, false);
+	auto src_packed = _pack_pixel_data(mask_source, false);
+	HostImageBuffers src = _make_host_buffers(src_packed, mask_source);
 
 	launch_nnf_set_identity(bufs, d_field_ptr, src, has_gmask,
 							m_distance_metric->patch_size());

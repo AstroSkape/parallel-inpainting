@@ -102,24 +102,26 @@ __device__ int compute_patch_dist(const uchar4 *src_rgb_mask,
 								  const uchar4 *tgt_gx, const uchar4 *tgt_gy,
 								  bool has_gmask, int ys, int xs, int yt,
 								  int xt, int src_h, int src_w, int tgt_h,
-								  int tgt_w, int patch_size) {
+								  int tgt_w, int patch_size, int best_d) {
 	float distance = 0;
-	float wsum = 0;
+	const float wsum_total = (float)(2 * patch_size + 1) * (2 * patch_size + 1);
 	const float kSSDScale = 9 * 255 * 255;
 	const float kDistanceScale = 65535;
+
+	// use for early termination
+	const float max_distance =
+        (float)(best_d + 1) * kSSDScale * wsum_total / kDistanceScale;
 
 	for (int dy = -patch_size; dy <= patch_size; ++dy) {
 		const int yys = ys + dy, yyt = yt + dy;
 
 		if (yys <= 0 || yys >= src_h - 1 || yyt <= 0 || yyt >= tgt_h - 1) {
 			distance += kSSDScale * (2 * patch_size + 1);
-			wsum += 2 * patch_size + 1;
 			continue;
 		}
 
 		for (int dx = -patch_size; dx <= patch_size; ++dx) {
 			int xxs = xs + dx, xxt = xt + dx;
-			wsum += 1;
 
 			if (xxs <= 0 || xxs >= src_w - 1 || xxt <= 0 || xxt >= tgt_w - 1) {
 				distance += kSSDScale;
@@ -161,11 +163,14 @@ __device__ int compute_patch_dist(const uchar4 *src_rgb_mask,
 			ssd += (tgt_grady.z - tgt_grady.z) * (src_grady.z - tgt_grady.z);
 			distance += ssd;
 		}
+
+		if (distance >= max_distance)
+			return kDistanceScale;
 	}
 
 	distance /= kSSDScale;
 
-	int res = (int)(kDistanceScale * distance / wsum);
+	int res = (int)(kDistanceScale * distance / wsum_total);
 	if (res < 0 || res > kDistanceScale)
 		return kDistanceScale;
 	return res;
@@ -237,7 +242,7 @@ nnf_jump_flood_kernel(const int *field_in, int *field_out,
 		int computed_dist = compute_patch_dist(
 			src_rgb_mask, src_gx, src_gy, tgt_rgb_mask, tgt_gx, tgt_gy,
 			has_gmask, p_y, p_x, candidate_y, candidate_x, src_h, src_w, tgt_h,
-			tgt_w, patch_size);
+			tgt_w, patch_size, best_d);
 		if (computed_dist < best_d) {
 			best_x = candidate_x;
 			best_y = candidate_y;
@@ -261,7 +266,7 @@ nnf_jump_flood_kernel(const int *field_in, int *field_out,
 			int d =
 				compute_patch_dist(src_rgb_mask, src_gx, src_gy, tgt_rgb_mask,
 								   tgt_gx, tgt_gy, has_gmask, p_y, p_x, yp, xp,
-								   src_h, src_w, tgt_h, tgt_w, patch_size);
+								   src_h, src_w, tgt_h, tgt_w, patch_size, best_d);
 			if (d < best_d) {
 				best_y = yp;
 				best_x = xp;
@@ -393,7 +398,7 @@ __global__ void nnf_randomize_kernel(
 
 		int d = compute_patch_dist(src_rgb_mask, src_gx, src_gy, tgt_rgb_mask,
 								   tgt_gx, tgt_gy, has_gmask, p_y, p_x, y_t,
-								   x_t, src_h, src_w, tgt_h, tgt_w, patch_size);
+								   x_t, src_h, src_w, tgt_h, tgt_w, patch_size, best_d);
 
 		if (d < best_d) {
 			best_y = y_t;
@@ -445,7 +450,7 @@ __global__ void nnf_initialize_from_kernel(
 
 	int dist = compute_patch_dist(src_rgb_mask, src_gx, src_gy, tgt_rgb_mask,
 								  tgt_gx, tgt_gy, has_gmask, i, j, y_t, x_t,
-								  src_h, src_w, tgt_h, tgt_w, patch_size);
+								  src_h, src_w, tgt_h, tgt_w, patch_size, 0);
 
 	int *nnf_field = field + idx * 3;
 	nnf_field[0] = y_t;

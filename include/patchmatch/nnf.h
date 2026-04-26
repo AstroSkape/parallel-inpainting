@@ -77,7 +77,10 @@ class NearestNeighborField {
 							  unsigned int seed);
 	void set_identity_cuda(CudaNNFDeviceBuffers *bufs, int *d_field_ptr,
 						   const MaskedImage &mask_source);
-
+	HostImageBuffers _make_host_buffers(std::vector<PixelData> &packed,
+										const MaskedImage &img) const;
+	std::vector<PixelData> _pack_pixel_data(const MaskedImage &img,
+											bool include_pixels) const;
   private:
 	inline int _distance(int source_y, int source_x, int target_y,
 						 int target_x) {
@@ -89,10 +92,6 @@ class NearestNeighborField {
 	void _initialize_field_from(const NearestNeighborField &other,
 								int max_retry);
 	void _minimize_link(int y, int x, int direction);
-	HostImageBuffers _make_host_buffers(std::vector<PixelData> &packed,
-										const MaskedImage &img) const;
-	std::vector<PixelData> _pack_pixel_data(const MaskedImage &img,
-											bool include_pixels) const;
 
 	MaskedImage m_source;
 	MaskedImage m_target;

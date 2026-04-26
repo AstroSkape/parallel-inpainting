@@ -3,6 +3,7 @@
 #include <opencv2/imgproc.hpp>
 
 #include "cuda/cuda_buffers.h"
+#include "cuda/nnf_cuda.h"
 #include "patchmatch/inpaint.h"
 #include "patchmatch/masked_image.h"
 #include "utils/cycle_timer.h"
@@ -87,6 +88,7 @@ void Inpainting::_initialize_pyramid() {
 	if (kDistance2Similarity.size() == 0) {
 		init_kDistance2Similarity();
 	}
+	upload_similarity_table(kDistance2Similarity);
 }
 
 void Inpainting::_create_fields_at_level(const MaskedImage &source,
@@ -311,6 +313,11 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 		auto vote = cv::Mat(new_target.size(), CV_64FC4);
 		vote.setTo(cv::Scalar::all(0));
 
+		if (m_gpu_enabled) {
+			auto vote_size = new_target.size();
+			m_cuda_buffers.ensure_vote_buffer(vote_size.height * vote_size.width);
+		}
+
 		// E step - Votes for best patch from NNF Source->Target (completeness)
 		// and Target->Source (coherence).
 
@@ -326,6 +333,14 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 		// that new visual structures are penalised
 		_expectation_step(m_target2source, 0, vote, new_source, upscaled,
 						  m_gpu_enabled);
+
+		if (m_gpu_enabled) {
+			cudaMemcpy(vote.ptr<double>(0,0), m_cuda_buffers.d_vote,
+					new_target.size().height * new_target.size().width * 
+					4 * sizeof(double),
+					cudaMemcpyDeviceToHost);
+		}
+
 		if (verbose)
 			std::cout << "  Expectation target to source finished."
 					  << std::endl;
@@ -333,7 +348,11 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 		double t_after_estep = CycleTimer::currentSeconds();
 
 		// M step - Compile votes (averaged) and update pixel values.
-		_maximization_step(new_target, vote, m_gpu_enabled);
+		if (m_gpu_enabled) {
+			_maximization_step_cuda(new_target, &m_cuda_buffers);
+		} else {
+			_maximization_step(new_target, vote, false);
+		}
 		if (verbose)
 			std::cout << "  Minimization step finished." << std::endl;
 
@@ -358,6 +377,14 @@ void Inpainting::_expectation_step(const NearestNeighborField &nnf,
 	auto source_size = nnf.source_size();
 	auto target_size = nnf.target_size();
 	const int patch_size = m_distance_metric->patch_size();
+
+	if (is_parallel) {
+		int *d_field_ptr = source2target ? m_cuda_buffers.s2t_curr 
+                                     : m_cuda_buffers.t2s_curr;
+		_expectation_step_cuda(nnf, source2target, source, upscaled,
+			&m_cuda_buffers, d_field_ptr);
+			return;
+	}
 
 	std::vector<cv::Mat> local_votes(thr_count);
 	for (int t = 0; t < thr_count; ++t) {

@@ -2,6 +2,7 @@
 #include "cuda/cuda_helpers.cuh"
 #include <cuda_runtime.h>
 #include <iostream>
+#include <vector>
 
 #define RED 0
 #define BLACK 1
@@ -75,6 +76,14 @@ void CudaNNFDeviceBuffers::ensure_t2s_fields(int tgt_pixels) {
 	ensure_fields(tgt_pixels, t2s_capacity, &t2s_curr, &t2s_prev);
 }
 
+void CudaNNFDeviceBuffers::ensure_vote_buffer(int pixels) {
+	if (pixels > vote_capacity) {
+		size_t count = pixels * 4;
+		realloc_device_ptr(&d_vote, count);
+		vote_capacity = pixels;
+	}
+	cudaMemset(d_vote, 0, pixels * 4 * sizeof(double));
+}
 /**
  * Ensures that the buffers can hold the required number of pixels.
  * Reuses existing buffers to avoid repeated calls to malloc/free
@@ -110,6 +119,12 @@ CudaNNFDeviceBuffers::~CudaNNFDeviceBuffers() {
 		cudaCheckError(cudaFree(t2s_curr));
 	if (t2s_prev)
 		cudaCheckError(cudaFree(t2s_prev));
+	if (d_vote)
+		cudaCheckError(cudaFree(d_vote));
+	if (d_new_target_img) 
+		cudaCheckError(cudaFree(d_new_target_img));
+	if (d_new_target_mask) 
+		cudaCheckError(cudaFree(d_new_target_mask));
 }
 
 __device__ int compute_patch_dist(const PixelData *src_data,
@@ -298,6 +313,136 @@ __global__ void nnf_jump_flood_kernel(const int *field_in, int *field_out,
 	nnf_out[2] = best_d;
 }
 
+// lookup table on device — mirrors kDistance2Similarity on CPU
+__device__ float d_kDistance2Similarity[65536];
+
+void upload_similarity_table(const std::vector<double> &table) {
+    std::vector<float> ftable(table.begin(), table.end());
+    cudaMemcpyToSymbol(d_kDistance2Similarity, ftable.data(),
+                       65536 * sizeof(float));
+}
+
+__global__ void expectation_step_kernel(double *d_vote, const int *d_field_ptr, 
+	const PixelData *d_src, const PixelData *d_nnf_src, const PixelData *d_nnf_tgt,     
+    bool has_gmask, int src_h, int src_w, int nnf_src_h, int nnf_src_w,  
+    int nnf_tgt_h, int nnf_tgt_w, bool source2target, bool upscaled,
+    int patch_size) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= nnf_src_h * nnf_src_w) return;
+
+    int i = idx / nnf_src_w;
+    int j = idx % nnf_src_w;
+
+    if (has_gmask && d_nnf_src[idx].gmask) return;
+
+    const int *nnf_entry = d_field_ptr + idx * 3;
+    int yp = nnf_entry[0];
+    int xp = nnf_entry[1];
+    int dp = nnf_entry[2];
+
+    float w = d_kDistance2Similarity[dp];
+
+    for (int di = -patch_size; di <= patch_size; ++di) {
+        for (int dj = -patch_size; dj <= patch_size; ++dj) {
+            int ys = i + di, xs = j + dj;
+            int yt = yp + di, xt = xp + dj;
+
+            if (ys < 0 || ys >= nnf_src_h || xs < 0 || xs >= nnf_src_w)
+                continue;
+            if (has_gmask && d_nnf_src[ys * nnf_src_w + xs].gmask)
+                continue;
+
+            if (yt < 0 || yt >= nnf_tgt_h || xt < 0 || xt >= nnf_tgt_w)
+                continue;
+            if (has_gmask && d_nnf_tgt[yt * nnf_tgt_w + xt].gmask)
+                continue;
+
+            if (!source2target) {
+                int tmp_y = ys; ys = yt; yt = tmp_y;
+                int tmp_x = xs; xs = xt; xt = tmp_x;
+            }
+
+            if (upscaled) {
+                for (int uy = 0; uy < 2; ++uy) {
+                    for (int ux = 0; ux < 2; ++ux) {
+                        int src_y = 2 * ys + uy, src_x = 2 * xs + ux;
+                        int tgt_y = 2 * yt + uy, tgt_x = 2 * xt + ux;
+
+                        if (src_y < 0 || src_y >= src_h || 
+                            src_x < 0 || src_x >= src_w) continue;
+                        if (tgt_y < 0 || tgt_y >= nnf_tgt_h * 2 || 
+                            tgt_x < 0 || tgt_x >= nnf_tgt_w * 2) continue;
+
+                        const PixelData &p = d_src[src_y * src_w + src_x];
+                        if (p.mask || (has_gmask && p.gmask)) continue;
+
+                        int vote_idx = (tgt_y * nnf_tgt_w * 2 + tgt_x) * 4;
+                        atomicAdd(&d_vote[vote_idx + 0], (double)p.rgb.x * w);
+                        atomicAdd(&d_vote[vote_idx + 1], (double)p.rgb.y * w);
+                        atomicAdd(&d_vote[vote_idx + 2], (double)p.rgb.z * w);
+                        atomicAdd(&d_vote[vote_idx + 3], (double)w);
+                    }
+                }
+            } else {
+                if (ys < 0 || ys >= src_h || xs < 0 || xs >= src_w) continue;
+
+                const PixelData &p = d_src[ys * src_w + xs];
+                if (p.mask || (has_gmask && p.gmask)) continue;
+
+                int vote_idx = (yt * nnf_tgt_w + xt) * 4;
+                atomicAdd(&d_vote[vote_idx + 0], (double)p.rgb.x * w);
+                atomicAdd(&d_vote[vote_idx + 1], (double)p.rgb.y * w);
+                atomicAdd(&d_vote[vote_idx + 2], (double)p.rgb.z * w);
+                atomicAdd(&d_vote[vote_idx + 3], (double)w);
+            }
+        }
+    }
+}
+
+void CudaNNFDeviceBuffers::ensure_new_target_buffer(int pixels) {
+    if (pixels > new_tgt_pixel_capacity) {
+        if (d_new_target_img) cudaFree(d_new_target_img);
+        if (d_new_target_mask) cudaFree(d_new_target_mask);
+        cudaMalloc(&d_new_target_img, pixels * 3);
+        cudaMalloc(&d_new_target_mask, pixels);
+        new_tgt_pixel_capacity = pixels;
+    }
+}
+
+__global__ void maximization_step_kernel(unsigned char *d_target_img,
+    unsigned char *d_target_mask, const unsigned char *d_target_gmask,
+    const double *d_vote, bool has_gmask, int tgt_h, int tgt_w) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= tgt_h * tgt_w) return;
+
+    if (has_gmask && d_target_gmask[idx]) return;
+
+    const double *vote_ptr = d_vote + idx * 4;
+    unsigned char *img_ptr = d_target_img + idx * 3;
+
+    if (vote_ptr[3] > 0) {
+        img_ptr[0] = (unsigned char)fminf(fmaxf(vote_ptr[0] / vote_ptr[3], 0.0), 255.0);
+        img_ptr[1] = (unsigned char)fminf(fmaxf(vote_ptr[1] / vote_ptr[3], 0.0), 255.0);
+        img_ptr[2] = (unsigned char)fminf(fmaxf(vote_ptr[2] / vote_ptr[3], 0.0), 255.0);
+    } else {
+        d_target_mask[idx] = 0;
+    }
+}
+
+void launch_maximization_step(unsigned char *d_target_img,
+    unsigned char *d_target_mask, const unsigned char *d_target_gmask,
+    const double *d_vote, bool has_gmask, int tgt_h, int tgt_w
+) {
+    int tgt_size = tgt_h * tgt_w;
+    int num_threads = 256;
+    int blocks = (tgt_size + num_threads - 1) / num_threads;
+
+    maximization_step_kernel<<<blocks, num_threads>>>(
+        d_target_img, d_target_mask, d_target_gmask,
+        d_vote, has_gmask, tgt_h, tgt_w
+    );
+}
+
 // __global__ void nnf_minimize_kernel(
 // 	int *field, const unsigned char *src_img, const unsigned char *tgt_img,
 // 	const unsigned char *src_gx, const unsigned char *src_gy,
@@ -469,6 +614,22 @@ extern "C" void launch_nnf_minimize(
 	cudaEventDestroy(t1);
 	cudaEventDestroy(t2);
 	cudaEventDestroy(t3);
+}
+
+void launch_expectation_step(double *d_vote, const int *d_field_ptr, 
+    const PixelData *d_src, const PixelData *d_nnf_src, const PixelData *d_nnf_tgt, 
+	bool has_gmask, int src_h, int src_w, int nnf_src_h, int nnf_src_w,
+	int nnf_tgt_h, int nnf_tgt_w, bool source2target, bool upscaled, int patch_size) {
+    int nnf_src_size = nnf_src_h * nnf_src_w;
+    
+    int num_threads = 256;
+    int blocks = (nnf_src_size + num_threads - 1) / num_threads;
+
+    expectation_step_kernel<<<blocks, num_threads>>>(
+        d_vote, d_field_ptr, d_src, d_nnf_src, d_nnf_tgt,
+        has_gmask, src_h, src_w, nnf_src_h, nnf_src_w,
+        nnf_tgt_h, nnf_tgt_w, source2target, upscaled,
+        patch_size);
 }
 
 /**

@@ -73,6 +73,9 @@ class MaskedImage {
 	inline unsigned char *get_mutable_image(int y, int x) {
 		return m_image.ptr<unsigned char>(y, x);
 	}
+	inline unsigned char *get_mutable_mask(int y, int x) {
+    	return m_mask.ptr<unsigned char>(y, x);
+	}
 
 	inline unsigned char get_image(int y, int x, int c) const {
 		return m_image.ptr<unsigned char>(y, x)[c];

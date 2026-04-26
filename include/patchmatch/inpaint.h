@@ -20,8 +20,16 @@ class Inpainting {
 										  MaskedImage target, int level,
 										  bool verbose);
 	void _expectation_step(const NearestNeighborField &nnf, bool source2target,
-						   cv::Mat &vote, const MaskedImage &source,
-						   bool upscaled, bool is_parallel);
+                           cv::Mat &vote, const MaskedImage &source,
+                           bool upscaled, bool is_parallel);
+    
+    void _expectation_step_cuda(const NearestNeighborField &nnf,
+                            bool source2target, const MaskedImage &source,
+                            bool upscaled, CudaNNFDeviceBuffers *cuda_bufs,
+                            int *d_field_ptr);
+
+	void _maximization_step_cuda(MaskedImage &target, CudaNNFDeviceBuffers *cuda_bufs);
+
 	void _maximization_step(MaskedImage &target, const cv::Mat &vote,
 							bool is_parallel);
 

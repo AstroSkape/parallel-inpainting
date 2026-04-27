@@ -244,16 +244,16 @@ cv::Mat Inpainting::run(bool verbose, bool verbose_visualize,
 MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 												  MaskedImage target, int level,
 												  bool verbose) {
-	const int nr_iters_em = 1 + 2 * level;
+	int nr_iters_em = 1 + 2 * level;
 	// coarser levels require lesser iterations to converge
 	const int nr_iters_nnf = static_cast<int>(std::min(7, 1 + level));
 	const int patch_size = m_distance_metric->patch_size();
 
 	MaskedImage new_source, new_target;
 
-	int gpu_nnf_iters = std::max(1, nr_iters_nnf / 4);
+	int gpu_minimize_iters = std::max(1, nr_iters_nnf / 4);
 	LOG("level %d, num_iters %d\n", level,
-		m_gpu_enabled ? gpu_nnf_iters : nr_iters_em);
+		m_gpu_enabled ? gpu_minimize_iters : nr_iters_em);
 	for (int iter_em = 0; iter_em < nr_iters_em; ++iter_em) {
 		double t_start = CycleTimer::currentSeconds();
 		if (iter_em != 0) {
@@ -276,10 +276,10 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 		if (verbose)
 			std::cout << "  NNF minimization started." << std::endl;
 		if (m_gpu_enabled) {
-			m_source2target.minimize(gpu_nnf_iters, true, &m_cuda_buffers,
+			m_source2target.minimize(gpu_minimize_iters, true, &m_cuda_buffers,
 									 m_cuda_buffers.s2t_curr,
 									 m_cuda_buffers.s2t_prev);
-			m_target2source.minimize(gpu_nnf_iters, true, &m_cuda_buffers,
+			m_target2source.minimize(gpu_minimize_iters, true, &m_cuda_buffers,
 									 m_cuda_buffers.t2s_curr,
 									 m_cuda_buffers.t2s_prev);
 		} else {
@@ -324,7 +324,7 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 		// Completeness - ensures that the output image contains as much
 		// information as possible from the input as possible
 		_expectation_step(m_source2target, 1, vote, new_source, upscaled,
-						  false);
+						  m_gpu_enabled);
 		if (verbose)
 			std::cout << "  Expectation source to target finished."
 					  << std::endl;
@@ -332,14 +332,7 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 		// Coherence - ensures that the output is coherent wrt the input and
 		// that new visual structures are penalised
 		_expectation_step(m_target2source, 0, vote, new_source, upscaled,
-						  false);
-
-		// if (m_gpu_enabled) {
-		// 	cudaMemcpy(vote.ptr<double>(0,0), m_cuda_buffers.d_vote,
-		// 			new_target.size().height * new_target.size().width * 
-		// 			4 * sizeof(double),
-		// 			cudaMemcpyDeviceToHost);
-		// }
+						  m_gpu_enabled);
 
 		if (verbose)
 			std::cout << "  Expectation target to source finished."
@@ -379,11 +372,8 @@ void Inpainting::_expectation_step(const NearestNeighborField &nnf,
 	const int patch_size = m_distance_metric->patch_size();
 
 	if (is_parallel) {
-		int *d_field_ptr = source2target ? m_cuda_buffers.s2t_curr 
-                                     : m_cuda_buffers.t2s_curr;
-		_expectation_step_cuda(nnf, source2target, source, upscaled,
-			&m_cuda_buffers, d_field_ptr);
-			return;
+		_expectation_step_cuda(nnf, source2target, source, upscaled, &m_cuda_buffers, vote);
+		return;
 	}
 
 	std::vector<cv::Mat> local_votes(thr_count);

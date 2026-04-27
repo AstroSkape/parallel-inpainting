@@ -61,11 +61,11 @@ NearestNeighborField::_make_host_buffers(std::vector<PixelData> &packed,
 
 void Inpainting::_expectation_step_cuda(const NearestNeighborField &nnf,
                                         bool source2target, const MaskedImage &source,
-                                        bool upscaled, CudaNNFDeviceBuffers *cuda_bufs,
-                                        int *d_field_ptr) {
+                                        bool upscaled, CudaNNFDeviceBuffers *cuda_bufs, cv::Mat &vote) {
 
     bool has_gmask = !nnf.source().global_mask().empty();
     bool include_pixels = true;
+	int *d_field_ptr = source2target ? m_cuda_buffers.s2t_curr : m_cuda_buffers.t2s_curr;
 
     // nnf source and target already on device from minimize
     // only need dimensions for kernel launch
@@ -74,33 +74,52 @@ void Inpainting::_expectation_step_cuda(const NearestNeighborField &nnf,
     int nnf_tgt_h = nnf.target_size().height;
     int nnf_tgt_w = nnf.target_size().width;
 
-    // handle upscaled source, different resolution, must upload separately
-    if (upscaled) {
-        auto src_packed = nnf._pack_pixel_data(source, include_pixels);
-        auto src_host = nnf._make_host_buffers(src_packed, source);
+    // // handle upscaled source, different resolution, must upload separately
+    // if (upscaled) {
+    //     auto src_packed = nnf._pack_pixel_data(source, include_pixels);
+    //     auto src_host = nnf._make_host_buffers(src_packed, source);
         
-        int upscaled_pixels = source.size().height * source.size().width;
-        cuda_bufs->upscaled_src_bufs.allocate_buffers(upscaled_pixels, has_gmask);
+    //     int upscaled_pixels = source.size().height * source.size().width;
+    //     cuda_bufs->upscaled_src_bufs.allocate_buffers(upscaled_pixels, has_gmask);
         
-        cudaCheckError(cudaMemcpy(cuda_bufs->upscaled_src_bufs.data,
-                                  src_host.data,
-                                  upscaled_pixels * sizeof(PixelData),
-                                  cudaMemcpyHostToDevice));
-    }
+    //     cudaCheckError(cudaMemcpy(cuda_bufs->upscaled_src_bufs.data,
+    //                               src_host.data,
+    //                               upscaled_pixels * sizeof(PixelData),
+    //                               cudaMemcpyHostToDevice));
+    // }
 
-    // select correct source buffer for kernel
-    // upscaled: use upscaled_src_bufs
-    // non-upscaled: src_bufs already valid from minimize
-    PixelData *d_src = upscaled ? cuda_bufs->upscaled_src_bufs.data 
-                                : cuda_bufs->src_bufs.data;
-    int src_h = upscaled ? source.size().height : nnf_src_h;
-    int src_w = upscaled ? source.size().width  : nnf_src_w;
+    // // select correct source buffer for kernel
+    // // upscaled: use upscaled_src_bufs
+    // // non-upscaled: src_bufs already valid from minimize
+    // PixelData *d_src = upscaled ? cuda_bufs->upscaled_src_bufs.data 
+    //                             : cuda_bufs->src_bufs.data;
+    // int src_h = upscaled ? source.size().height : nnf_src_h;
+    // int src_w = upscaled ? source.size().width  : nnf_src_w;
+
+	auto src_packed = nnf._pack_pixel_data(source, include_pixels);
+    auto src_host   = nnf._make_host_buffers(src_packed, source);
+
+    int src_pixels = source.size().height * source.size().width;
+    cuda_bufs->upscaled_src_bufs.allocate_buffers(src_pixels, has_gmask);
+    cudaCheckError(cudaMemcpy(cuda_bufs->upscaled_src_bufs.data,
+                              src_host.data,
+                              src_pixels * sizeof(PixelData),
+                              cudaMemcpyHostToDevice));
+
+    PixelData *d_src = cuda_bufs->upscaled_src_bufs.data;
+    int src_h = source.size().height;
+    int src_w = source.size().width;
 
     launch_expectation_step(cuda_bufs->d_vote, d_field_ptr, d_src, 
         cuda_bufs->src_bufs.data, cuda_bufs->tgt_bufs.data, 
         has_gmask, src_h, src_w, nnf_src_h, nnf_src_w,
         nnf_tgt_h, nnf_tgt_w, source2target, upscaled,
         m_distance_metric->patch_size());
+	
+	cudaMemcpy(vote.ptr<double>(0,0), m_cuda_buffers.d_vote,
+					nnf_tgt_h * nnf_tgt_w * 
+					4 * sizeof(double),
+					cudaMemcpyDeviceToHost);
 }
 
 void Inpainting::_maximization_step_cuda(MaskedImage &target,

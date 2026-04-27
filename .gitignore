@@ -3,4 +3,4 @@
 build/
 images/
 *debug*
-src/venv/
+*venv/

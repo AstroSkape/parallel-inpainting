@@ -58,25 +58,21 @@ def mat_to_b64(path: str) -> str:
         return base64.b64encode(f.read()).decode()
 
 
-def run_inpaint(image_path: str, mode: str) -> tuple[float, str]:
+def run_inpaint(image_path: str):
     """
-    Run the inpaint binary.
-    mode: 'cpu' (1 thread) or 'gpu'
-    Returns (elapsed_seconds, output_image_path).
+    Run the inpaint binary (runs both CPU and GPU internally).
+    Returns (metrics, cpu_out, gpu_out).
     """
-    ##
-    base   = os.path.splitext(image_path)[0]
-    suffix = "GPU" if mode == "gpu" else "CPU"
-    out    = f"{base}.bmp_output_{suffix}.png"
-    cpu_out = f"{base}.bmp_output_CPU.png"
-    gpu_out = f"{base}.bmp_output_GPU.png"
-    
-    cmd = [INPAINT_BIN, image_path, cpu_out, gpu_out]
+    base    = image_path  # main.cpp appends _output_CPU.png etc to the input path
+    cpu_out = f"{base}_output_CPU.png"
+    gpu_out = f"{base}_output_GPU.png"
+
+    cmd = [INPAINT_BIN, image_path]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
 
     if result.returncode != 0:
         raise RuntimeError(result.stderr)
-    
+
     metrics = {}
     for line in result.stdout.splitlines():
         if line.startswith("METRICS_JSON:"):
@@ -110,22 +106,13 @@ def serve_image(filename):
 
 @app.route("/inpaint", methods=["POST"])
 def inpaint():
-    """
-    Accepts:
-      - image_path: relative filename in IMAGES_DIR, OR
-      - image_data: base64 PNG (uploaded from browser with user mask painted)
-      - mask_data:  base64 PNG mask (white = remove)
-
-    Returns JSON with CPU time, GPU time, speedup, quality metrics,
-    and base64-encoded result images.
-    """
     data = request.get_json()
 
     if "image_data" in data:
-        img_bytes  = base64.b64decode(data["image_data"].split(",")[-1])
-        img        = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-        img_name   = f"upload_{int(time.time())}.bmp"
-        img_path   = os.path.join(UPLOAD_DIR, img_name)
+        img_bytes = base64.b64decode(data["image_data"].split(",")[-1])
+        img       = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+        img_name  = f"upload_{int(time.time())}.bmp"
+        img_path  = os.path.join(UPLOAD_DIR, img_name)
         img.save(img_path, format="BMP")
     elif "image_path" in data:
         img_path = os.path.join(IMAGES_DIR, data["image_path"])
@@ -135,32 +122,23 @@ def inpaint():
         return jsonify({"error": "No image provided"}), 400
 
     try:
-        cpu_time, cpu_out = run_inpaint(img_path, "cpu")
+        metrics, cpu_out, gpu_out = run_inpaint(img_path)
     except Exception as e:
-        return jsonify({"error": f"CPU run failed: {e}"}), 500
+        return jsonify({"error": f"Inpaint failed: {e}"}), 500
 
-    gpu_time, gpu_out, gpu_error = None, None, None
-    try:
-        gpu_time, gpu_out = run_inpaint(img_path, "gpu")
-    except Exception as e:
-        gpu_error = str(e)
-
-    cpu_img = np.array(Image.open(cpu_out).convert("RGB"))
-    metrics = {}
-    if gpu_out and os.path.exists(gpu_out):
-        gpu_img = np.array(Image.open(gpu_out).convert("RGB"))
-        metrics = compute_metrics(cpu_img, gpu_img)
-
-    speedup = round(cpu_time / gpu_time, 3) if gpu_time else None
+    # add quality label to metrics if missing
+    if metrics and "psnr" in metrics and "quality" not in metrics:
+        psnr = metrics["psnr"]
+        metrics["quality"] = "GOOD" if psnr > 35 else ("ACCEPTABLE" if psnr > 25 else "POOR")
 
     response = {
-        "cpu_time":   round(cpu_time, 3),
-        "gpu_time":   round(gpu_time, 3) if gpu_time else None,
-        "speedup":    speedup,
-        "gpu_error":  gpu_error,
+        "cpu_time":   metrics.get("cpu_time"),
+        "gpu_time":   metrics.get("gpu_time"),
+        "speedup":    metrics.get("speedup"),
+        "gpu_error":  None,
         "metrics":    metrics,
-        "cpu_result": mat_to_b64(cpu_out),
-        "gpu_result": mat_to_b64(gpu_out) if gpu_out and os.path.exists(gpu_out) else None,
+        "cpu_result": mat_to_b64(cpu_out) if os.path.exists(cpu_out) else None,
+        "gpu_result": mat_to_b64(gpu_out) if os.path.exists(gpu_out) else None,
         "original":   mat_to_b64(img_path),
     }
 

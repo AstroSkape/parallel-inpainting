@@ -25,8 +25,7 @@ class Inpainting {
     
     void _expectation_step_cuda(const NearestNeighborField &nnf,
                             bool source2target, const MaskedImage &source,
-                            bool upscaled, CudaNNFDeviceBuffers *cuda_bufs,
-                            int *d_field_ptr);
+                            bool upscaled, CudaNNFDeviceBuffers *cuda_bufs, cv::Mat &vote);
 
 	void _maximization_step_cuda(MaskedImage &target, CudaNNFDeviceBuffers *cuda_bufs);
 

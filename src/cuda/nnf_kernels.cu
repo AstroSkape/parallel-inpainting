@@ -326,7 +326,7 @@ __global__ void expectation_step_kernel(double *d_vote, const int *d_field_ptr,
 	const PixelData *d_src, const PixelData *d_nnf_src, const PixelData *d_nnf_tgt,     
     bool has_gmask, int src_h, int src_w, int nnf_src_h, int nnf_src_w,  
     int nnf_tgt_h, int nnf_tgt_w, bool source2target, bool upscaled,
-    int patch_size) {
+    int patch_size, int vote_h, int vote_w) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= nnf_src_h * nnf_src_w) return;
 
@@ -370,13 +370,13 @@ __global__ void expectation_step_kernel(double *d_vote, const int *d_field_ptr,
 
                         if (src_y < 0 || src_y >= src_h || 
                             src_x < 0 || src_x >= src_w) continue;
-                        if (tgt_y < 0 || tgt_y >= nnf_tgt_h * 2 || 
-                            tgt_x < 0 || tgt_x >= nnf_tgt_w * 2) continue;
+                        if (tgt_y < 0 || tgt_y >= vote_h || 
+							tgt_x < 0 || tgt_x >= vote_w) continue;
 
                         const PixelData &p = d_src[src_y * src_w + src_x];
                         if (p.mask || (has_gmask && p.gmask)) continue;
 
-                        int vote_idx = (tgt_y * nnf_tgt_w * 2 + tgt_x) * 4;
+                        int vote_idx = (tgt_y * vote_w + tgt_x) * 4;
                         atomicAdd(&d_vote[vote_idx + 0], (double)p.rgb.x * w);
                         atomicAdd(&d_vote[vote_idx + 1], (double)p.rgb.y * w);
                         atomicAdd(&d_vote[vote_idx + 2], (double)p.rgb.z * w);
@@ -389,7 +389,7 @@ __global__ void expectation_step_kernel(double *d_vote, const int *d_field_ptr,
                 const PixelData &p = d_src[ys * src_w + xs];
                 if (p.mask || (has_gmask && p.gmask)) continue;
 
-                int vote_idx = (yt * nnf_tgt_w + xt) * 4;
+                int vote_idx = (yt * vote_w + xt) * 4;
                 atomicAdd(&d_vote[vote_idx + 0], (double)p.rgb.x * w);
                 atomicAdd(&d_vote[vote_idx + 1], (double)p.rgb.y * w);
                 atomicAdd(&d_vote[vote_idx + 2], (double)p.rgb.z * w);
@@ -619,7 +619,8 @@ extern "C" void launch_nnf_minimize(
 void launch_expectation_step(double *d_vote, const int *d_field_ptr, 
     const PixelData *d_src, const PixelData *d_nnf_src, const PixelData *d_nnf_tgt, 
 	bool has_gmask, int src_h, int src_w, int nnf_src_h, int nnf_src_w,
-	int nnf_tgt_h, int nnf_tgt_w, bool source2target, bool upscaled, int patch_size) {
+	int nnf_tgt_h, int nnf_tgt_w, bool source2target, bool upscaled, int patch_size,
+	int vote_h, int vote_w) {
     int nnf_src_size = nnf_src_h * nnf_src_w;
     
     int num_threads = 256;
@@ -629,7 +630,7 @@ void launch_expectation_step(double *d_vote, const int *d_field_ptr,
         d_vote, d_field_ptr, d_src, d_nnf_src, d_nnf_tgt,
         has_gmask, src_h, src_w, nnf_src_h, nnf_src_w,
         nnf_tgt_h, nnf_tgt_w, source2target, upscaled,
-        patch_size);
+        patch_size, vote_h, vote_w);
 }
 
 /**

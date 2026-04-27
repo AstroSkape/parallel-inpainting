@@ -34,7 +34,7 @@ void launch_expectation_step(double *d_vote, const int *d_field_ptr,
     const PixelData *d_src, const PixelData *d_nnf_src, const PixelData *d_nnf_tgt,
     bool has_gmask, int src_h, int src_w, int nnf_src_h, int nnf_src_w,
     int nnf_tgt_h, int nnf_tgt_w, bool source2target, bool upscaled,
-    int patch_size);
+    int patch_size, int vote_h, int vote_w);
 
 void launch_maximization_step(unsigned char *d_target_img,
     unsigned char *d_target_mask, const unsigned char *d_target_gmask,

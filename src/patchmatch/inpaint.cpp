@@ -324,7 +324,7 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 		// Completeness - ensures that the output image contains as much
 		// information as possible from the input as possible
 		_expectation_step(m_source2target, 1, vote, new_source, upscaled,
-						  m_gpu_enabled);
+						  false);
 		if (verbose)
 			std::cout << "  Expectation source to target finished."
 					  << std::endl;
@@ -332,14 +332,14 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 		// Coherence - ensures that the output is coherent wrt the input and
 		// that new visual structures are penalised
 		_expectation_step(m_target2source, 0, vote, new_source, upscaled,
-						  m_gpu_enabled);
+						  false);
 
-		if (m_gpu_enabled) {
-			cudaMemcpy(vote.ptr<double>(0,0), m_cuda_buffers.d_vote,
-					new_target.size().height * new_target.size().width * 
-					4 * sizeof(double),
-					cudaMemcpyDeviceToHost);
-		}
+		// if (m_gpu_enabled) {
+		// 	cudaMemcpy(vote.ptr<double>(0,0), m_cuda_buffers.d_vote,
+		// 			new_target.size().height * new_target.size().width * 
+		// 			4 * sizeof(double),
+		// 			cudaMemcpyDeviceToHost);
+		// }
 
 		if (verbose)
 			std::cout << "  Expectation target to source finished."
@@ -349,7 +349,7 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 
 		// M step - Compile votes (averaged) and update pixel values.
 		if (m_gpu_enabled) {
-			_maximization_step_cuda(new_target, &m_cuda_buffers);
+			_maximization_step_cuda(new_target, &m_cuda_buffers, vote);
 		} else {
 			_maximization_step(new_target, vote, false);
 		}

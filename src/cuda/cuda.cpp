@@ -104,7 +104,7 @@ void Inpainting::_expectation_step_cuda(const NearestNeighborField &nnf,
 }
 
 void Inpainting::_maximization_step_cuda(MaskedImage &target,
-                                          CudaNNFDeviceBuffers *cuda_bufs) {
+                                          CudaNNFDeviceBuffers *cuda_bufs, cv::Mat &vote) {
     int tgt_h = target.size().height;
     int tgt_w = target.size().width;
     int tgt_pixels = tgt_h * tgt_w;
@@ -112,6 +112,10 @@ void Inpainting::_maximization_step_cuda(MaskedImage &target,
 
     cuda_bufs->ensure_new_target_buffer(tgt_pixels);
 
+	cudaMemcpy(m_cuda_buffers.d_vote, vote.ptr<double>(0,0),
+					tgt_h * tgt_w * 
+					4 * sizeof(double),
+					cudaMemcpyHostToDevice);
     cudaCheckError(cudaMemcpy(cuda_bufs->d_new_target_img,
                               target.image().ptr<unsigned char>(0, 0),
                               tgt_pixels * 3, cudaMemcpyHostToDevice));

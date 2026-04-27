@@ -28,7 +28,7 @@ class Inpainting {
                             bool upscaled, CudaNNFDeviceBuffers *cuda_bufs,
                             int *d_field_ptr);
 
-	void _maximization_step_cuda(MaskedImage &target, CudaNNFDeviceBuffers *cuda_bufs);
+	void _maximization_step_cuda(MaskedImage &target, CudaNNFDeviceBuffers *cuda_bufs, cv::Mat &vote);
 
 	void _maximization_step(MaskedImage &target, const cv::Mat &vote,
 							bool is_parallel);

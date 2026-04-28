@@ -66,16 +66,16 @@ class NearestNeighborField {
 
 	void minimize(int nr_pass, bool is_gpu_enabled,
 				  CudaNNFDeviceBuffers *cuda_bufs = nullptr,
-				  int *d_field_ptr = nullptr, int *d_field_scratch = nullptr);
+				  int4 *d_field_ptr = nullptr, int4 *d_field_scratch = nullptr);
 	void minimize_cuda(int nr_pass, CudaNNFDeviceBuffers *bufs,
-					   int *d_field_ptr, int *device_field_scratch);
-	void initialize_cuda_randomize(CudaNNFDeviceBuffers *bufs, int *d_field_ptr,
+					   int4 *d_field_ptr, int4 *device_field_scratch);
+	void initialize_cuda_randomize(CudaNNFDeviceBuffers *bufs, int4 *d_field_ptr,
 								   int max_retry, unsigned int seed, cudaStream_t stream);
-	void initialize_cuda_from(CudaNNFDeviceBuffers *bufs, int *d_field_ptr,
-							  const int *other_d_field_ptr,
+	void initialize_cuda_from(CudaNNFDeviceBuffers *bufs, int4 *d_field_ptr,
+							  const int4 *other_d_field_ptr,
 							  cv::Size other_source_size, int max_retry,
 							  unsigned int seed, cudaStream_t stream);
-	void set_identity_cuda(CudaNNFDeviceBuffers *bufs, int *d_field_ptr,
+	void set_identity_cuda(CudaNNFDeviceBuffers *bufs, int4 *d_field_ptr,
 						   const MaskedImage &mask_source);
 
   private:

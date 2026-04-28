@@ -31,8 +31,8 @@ NearestNeighborField::_make_host_buffers(const MaskedImage &img,
 
 void NearestNeighborField::minimize_cuda(int nr_pass,
 										 CudaNNFDeviceBuffers *bufs,
-										 int *d_field_ptr,
-										 int *d_field_scratch) {
+										 int4 *d_field_ptr,
+										 int4 *d_field_scratch) {
 	bool has_gmask =
 		!m_source.global_mask().empty() && !m_target.global_mask().empty();
 
@@ -47,7 +47,7 @@ void NearestNeighborField::minimize_cuda(int nr_pass,
 }
 
 void NearestNeighborField::initialize_cuda_randomize(CudaNNFDeviceBuffers *bufs,
-													 int *d_field_ptr,
+													 int4 *d_field_ptr,
 													 int max_retry,
 													 unsigned int seed,
 													 cudaStream_t stream) {
@@ -66,7 +66,7 @@ void NearestNeighborField::initialize_cuda_randomize(CudaNNFDeviceBuffers *bufs,
 }
 
 void NearestNeighborField::initialize_cuda_from(
-	CudaNNFDeviceBuffers *bufs, int *d_field_ptr, const int *other_d_field_ptr,
+	CudaNNFDeviceBuffers *bufs, int4 *d_field_ptr, const int4 *other_d_field_ptr,
 	cv::Size other_source_size, int max_retry, unsigned int seed,
 	cudaStream_t stream) {
 	bool has_gmask =
@@ -83,7 +83,7 @@ void NearestNeighborField::initialize_cuda_from(
 }
 
 void NearestNeighborField::set_identity_cuda(CudaNNFDeviceBuffers *bufs,
-											 int *d_field_ptr,
+											 int4 *d_field_ptr,
 											 const MaskedImage &mask_source) {
 	bool has_gmask = !m_source.global_mask().empty();
 

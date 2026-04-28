@@ -47,11 +47,12 @@ void DeviceImageBuffers::allocate_buffers(int num_pixels, bool has_gmask) {
 	}
 }
 
-void ensure_fields(int required_pixels, int &capacity, int **curr, int **prev) {
+void ensure_fields(int required_pixels, int &capacity, int4 **curr,
+				   int4 **prev) {
 	if (required_pixels > capacity) {
-		size_t count = required_pixels * 3;
-		realloc_device_ptr(curr, count);
-		realloc_device_ptr(prev, count);
+		// size_t count = required_pixels * 3;
+		realloc_device_ptr(curr, required_pixels);
+		realloc_device_ptr(prev, required_pixels);
 		capacity = required_pixels;
 	}
 }
@@ -243,7 +244,7 @@ static void upload_image_buffers_to_device(DeviceImageBuffers &d_bufs,
 }
 
 __global__ void
-nnf_jump_flood_kernel(const int *field_in, int *field_out,
+nnf_jump_flood_kernel(const int4 *field_in, int4 *field_out,
 					  const uchar4 *src_rgb_mask, const uchar4 *src_gx,
 					  const uchar4 *src_gy, const uchar4 *tgt_rgb_mask,
 					  const uchar4 *tgt_gx, const uchar4 *tgt_gy,
@@ -260,12 +261,12 @@ nnf_jump_flood_kernel(const int *field_in, int *field_out,
 	if (has_gmask && (src_rgb_mask[idx].w & 2))
 		return;
 
-	const int *nnf_in = field_in + idx * 3;
-	int *nnf_out = field_out + idx * 3;
+	int4 entry = field_in[idx];
 
-	int best_y = nnf_in[0];
-	int best_x = nnf_in[1];
-	int best_d = nnf_in[2];
+	// int best_y = nnf_in[0];
+	// int best_x = nnf_in[1];
+	// int best_d = nnf_in[2];
+	int best_y = entry.x, best_x = entry.y, best_d = entry.z;
 
 	unsigned int step = 0;
 
@@ -284,11 +285,11 @@ nnf_jump_flood_kernel(const int *field_in, int *field_out,
 		if (has_gmask && (src_rgb_mask[newidx].w & 2))
 			continue;
 
-		const int *neighbor_field = field_in + (newy * src_w + newx) * 3;
+		int4 neighbor_field = field_in[newy * src_w + newx];
 		int candidate_y =
-			device_clamp(neighbor_field[0] - directions[i][0], 0, tgt_h - 1);
+			device_clamp(neighbor_field.x - directions[i][0], 0, tgt_h - 1);
 		int candidate_x =
-			device_clamp(neighbor_field[1] - directions[i][1], 0, tgt_w - 1);
+			device_clamp(neighbor_field.y - directions[i][1], 0, tgt_w - 1);
 
 		int computed_dist = compute_patch_dist(
 			src_rgb_mask, src_gx, src_gy, tgt_rgb_mask, tgt_gx, tgt_gy,
@@ -329,13 +330,11 @@ nnf_jump_flood_kernel(const int *field_in, int *field_out,
 		step++;
 	}
 
-	nnf_out[0] = best_y;
-	nnf_out[1] = best_x;
-	nnf_out[2] = best_d;
+	field_out[idx] = make_int4(best_y, best_x, best_d, 0);
 }
 
 extern "C" void launch_nnf_minimize(
-	CudaNNFDeviceBuffers *bufs, int *d_field_ptr, int *d_field_scratch,
+	CudaNNFDeviceBuffers *bufs, int4 *d_field_ptr, int4 *d_field_scratch,
 	int *h_field_ptr, const HostImageBuffers &src, const HostImageBuffers &tgt,
 	bool has_gmask, int patch_size, int nr_pass, unsigned int random_seed) {
 
@@ -359,8 +358,8 @@ extern "C" void launch_nnf_minimize(
 	int blocks = (src_size + num_threads - 1) / num_threads;
 
 	const int jumps[6] = {8, 4, 2, 1, 2, 1};
-	int *in_ptr = d_field_ptr;
-	int *out_ptr = d_field_scratch;
+	int4 *in_ptr = d_field_ptr;
+	int4 *out_ptr = d_field_scratch;
 
 	// LOG("[CUDA] Number of blocks: %d\n", blocks);
 
@@ -375,24 +374,31 @@ extern "C" void launch_nnf_minimize(
 				tgt.width, patch_size, seed, jumps[ji]);
 
 			// swap buffers
-			int *tmp = in_ptr;
+			int4 *tmp = in_ptr;
 			in_ptr = out_ptr;
 			out_ptr = tmp;
 		}
 	}
 
 	if (in_ptr != d_field_ptr) {
-		cudaCheckError(cudaMemcpy(d_field_ptr, in_ptr,
-								  src_size * 3 * sizeof(int),
+		cudaCheckError(cudaMemcpy(d_field_ptr, in_ptr, src_size * sizeof(int4),
 								  cudaMemcpyDeviceToDevice));
 	}
 
 	cudaEventRecord(t2);
 
 	// copy back from device to host
-	cudaCheckError(cudaMemcpy(h_field_ptr, d_field_ptr,
-							  src_size * 3 * sizeof(int),
+	std::vector<int4> tmp(src_size);
+	cudaCheckError(cudaMemcpy(tmp.data(), d_field_ptr, src_size * sizeof(int4),
 							  cudaMemcpyDeviceToHost));
+	int *out = h_field_ptr;
+	for (int i = 0; i < src_size; ++i) {
+		out[i * 3 + 0] = tmp[i].x;
+		out[i * 3 + 1] = tmp[i].y;
+		out[i * 3 + 2] = tmp[i].z;
+	}
+	// cudaCheckError(cudaMemcpy(h_field_ptr, d_field_ptr, src_size * sizeof(int4),
+	// 						  cudaMemcpyDeviceToHost));
 
 	cudaEventRecord(t3);
 	cudaEventSynchronize(t3);
@@ -416,7 +422,7 @@ extern "C" void launch_nnf_minimize(
  * serial implementation
  */
 __global__ void nnf_randomize_kernel(
-	int *field, const uchar4 *src_rgb_mask, const uchar4 *src_gx,
+	int4 *field, const uchar4 *src_rgb_mask, const uchar4 *src_gx,
 	const uchar4 *src_gy, const uchar4 *tgt_rgb_mask, const uchar4 *tgt_gx,
 	const uchar4 *tgt_gy, bool has_gmask, int src_h, int src_w, int tgt_h,
 	int tgt_w, int patch_size, int max_retry, bool reset, unsigned int seed) {
@@ -430,9 +436,9 @@ __global__ void nnf_randomize_kernel(
 
 	if (has_gmask && (src_rgb_mask[idx].w & 2))
 		return;
-	int *nnf_field = field + idx * 3; // 3 channels
+	int4 entry = field[idx]; // 3 channels
 
-	int dist = reset ? kDistanceScale : nnf_field[2];
+	int dist = reset ? kDistanceScale : entry.z;
 	if (dist < kDistanceScale)
 		return;
 
@@ -460,9 +466,10 @@ __global__ void nnf_randomize_kernel(
 			break;
 	}
 
-	nnf_field[0] = best_y;
-	nnf_field[1] = best_x;
-	nnf_field[2] = best_d;
+	// nnf_field[0] = best_y;
+	// nnf_field[1] = best_x;
+	// nnf_field[2] = best_d;
+	field[idx] = make_int4(best_y, best_x, best_d, 0);
 }
 
 /**
@@ -470,7 +477,7 @@ __global__ void nnf_randomize_kernel(
  * _initialize_field_from on the CPU
  */
 __global__ void nnf_initialize_from_kernel(
-	int *field, const int *other_field, const uchar4 *src_rgb_mask,
+	int4 *field, const int4 *other_field, const uchar4 *src_rgb_mask,
 	const uchar4 *src_gx, const uchar4 *src_gy, const uchar4 *tgt_rgb_mask,
 	const uchar4 *tgt_gx, const uchar4 *tgt_gy, bool has_gmask, int src_h,
 	int src_w, int tgt_h, int tgt_w, int other_src_h, int other_src_w,
@@ -491,10 +498,11 @@ __global__ void nnf_initialize_from_kernel(
 	int ilow = (int)fminf((float)i / fi, (float)(other_src_h - 1));
 	int jlow = (int)fminf((float)j / fj, (float)(other_src_w - 1));
 
-	const int *other_value = other_field + (ilow * other_src_w + jlow) * 3;
+	// const int *other_value = other_field + (ilow * other_src_w + jlow) * 3;
+	int4 other_value = other_field[ilow * other_src_w + jlow];
 
-	int y_t = (int)((float)other_value[0] * fi);
-	int x_t = (int)((float)other_value[1] * fj);
+	int y_t = (int)((float)other_value.x * fi);
+	int x_t = (int)((float)other_value.y * fj);
 
 	y_t = device_clamp(y_t, 0, tgt_h - 1);
 	x_t = device_clamp(x_t, 0, tgt_w - 1);
@@ -503,14 +511,15 @@ __global__ void nnf_initialize_from_kernel(
 								  tgt_gx, tgt_gy, has_gmask, i, j, y_t, x_t,
 								  src_h, src_w, tgt_h, tgt_w, patch_size, 0);
 
-	int *nnf_field = field + idx * 3;
-	nnf_field[0] = y_t;
-	nnf_field[1] = x_t;
-	nnf_field[2] = dist;
+	// int *nnf_field = field + idx * 3;
+	// nnf_field[0] = y_t;
+	// nnf_field[1] = x_t;
+	// nnf_field[2] = dist;
+	field[idx] = make_int4(y_t, x_t, dist, 0);
 }
 
 extern "C" void
-launch_nnf_randomize(CudaNNFDeviceBuffers *bufs, int *d_field_ptr,
+launch_nnf_randomize(CudaNNFDeviceBuffers *bufs, int4 *d_field_ptr,
 					 const HostImageBuffers &src, const HostImageBuffers &tgt,
 					 bool has_gmask, int patch_size, int max_retry, bool reset,
 					 unsigned int seed, cudaStream_t stream) {
@@ -531,10 +540,11 @@ launch_nnf_randomize(CudaNNFDeviceBuffers *bufs, int *d_field_ptr,
 }
 
 extern "C" void launch_nnf_initialize_from(
-	CudaNNFDeviceBuffers *bufs, int *d_field_ptr, const int *other_d_field_ptr,
-	const HostImageBuffers &src, const HostImageBuffers &tgt, int other_src_h,
-	int other_src_w, bool has_gmask, int patch_size, int max_retry,
-	unsigned int seed, cudaStream_t stream) {
+	CudaNNFDeviceBuffers *bufs, int4 *d_field_ptr,
+	const int4 *other_d_field_ptr, const HostImageBuffers &src,
+	const HostImageBuffers &tgt, int other_src_h, int other_src_w,
+	bool has_gmask, int patch_size, int max_retry, unsigned int seed,
+	cudaStream_t stream) {
 
 	int src_size = src.height * src.width;
 
@@ -576,7 +586,7 @@ __device__ bool d_is_patch_masked(const uchar4 *src_rgb_mask, bool has_gmask,
 	return false;
 }
 
-__global__ void nnf_set_identity_kernel(int *field, const uchar4 *src_rgb_mask,
+__global__ void nnf_set_identity_kernel(int4 *field, const uchar4 *src_rgb_mask,
 										bool has_gmask, int src_h, int src_w,
 										int patch_size) {
 	int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -590,15 +600,16 @@ __global__ void nnf_set_identity_kernel(int *field, const uchar4 *src_rgb_mask,
 
 	if (!d_is_patch_masked(src_rgb_mask, has_gmask, y, x, src_h, src_w,
 						   patch_size)) {
-		int *nnf_field = field + idx * 3;
-		nnf_field[0] = y;
-		nnf_field[1] = x;
-		nnf_field[2] = 0;
+		// int *nnf_field = field + idx * 3;
+		// nnf_field[0] = y;
+		// nnf_field[1] = x;
+		// nnf_field[2] = 0;
+		field[idx] = make_int4(y, x, 0, 0);
 	}
 }
 
 extern "C" void launch_nnf_set_identity(CudaNNFDeviceBuffers *bufs,
-										int *d_field_ptr,
+										int4 *d_field_ptr,
 										const HostImageBuffers &src,
 										bool has_gmask, int patch_size) {
 
@@ -617,7 +628,7 @@ extern "C" void launch_nnf_set_identity(CudaNNFDeviceBuffers *bufs,
 }
 
 __global__ void expectation_step_kernel(const uchar4 *iter_img,
-										const uchar4 *peer_img, const int *nnf,
+										const uchar4 *peer_img, const int4 *nnf,
 										float4 *vote, const float *dist2sim,
 										bool source2target, bool has_gmask,
 										int iter_h, int iter_w, int peer_h,
@@ -633,9 +644,11 @@ __global__ void expectation_step_kernel(const uchar4 *iter_img,
 	if (has_gmask && (iter_img[idx].w & 2))
 		return;
 
-	int yp = nnf[idx * 3 + 0];
-	int xp = nnf[idx * 3 + 1];
-	int dp = nnf[idx * 3 + 2];
+	int4 nnf_entry = nnf[idx];
+	// int yp = nnf[idx * 3 + 0];
+	// int xp = nnf[idx * 3 + 1];
+	// int dp = nnf[idx * 3 + 2];
+	int yp = nnf_entry.x, xp = nnf_entry.y, dp = nnf_entry.z;
 
 	if (dp < 0)
 		dp = 0;
@@ -651,7 +664,6 @@ __global__ void expectation_step_kernel(const uchar4 *iter_img,
 				continue;
 			if (yb < 0 || yb >= peer_h || xb < 0 || xb >= peer_w)
 				continue;
-
 
 			//   s2t (true):  read from iter (source), write to peer (target)
 			//   t2s (false): read from peer (source), write to iter (target)

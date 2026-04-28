@@ -40,13 +40,13 @@ struct DeviceImageBuffers {
 
 struct CudaNNFDeviceBuffers {
 	// ping pong field buffers for the source to target NNF
-	int *s2t_curr = nullptr;
-	int *s2t_prev = nullptr;
+	int4 *s2t_curr = nullptr;
+	int4 *s2t_prev = nullptr;
 	int s2t_capacity = 0;
 
 	// ping pong field buffers for the target to source NNF
-	int *t2s_curr = nullptr;
-	int *t2s_prev = nullptr;
+	int4 *t2s_curr = nullptr;
+	int4 *t2s_prev = nullptr;
 	int t2s_capacity = 0;
 
 	DeviceImageBuffers src_bufs;
@@ -71,12 +71,12 @@ struct CudaNNFDeviceBuffers {
 	void upload_dist2sim(const double *host_table, int n);
 
 	void swap_s2t_fields() {
-		int *tmp = s2t_curr;
+		int4 *tmp = s2t_curr;
 		s2t_curr = s2t_prev;
 		s2t_prev = tmp;
 	}
 	void swap_t2s_fields() {
-		int *tmp_buf = t2s_curr;
+		int4 *tmp_buf = t2s_curr;
 		t2s_curr = t2s_prev;
 		t2s_prev = tmp_buf;
 	}

@@ -387,17 +387,8 @@ extern "C" void launch_nnf_minimize(
 	cudaEventRecord(t2);
 
 	// copy back from device to host
-	std::vector<int4> tmp(src_size);
-	cudaCheckError(cudaMemcpy(tmp.data(), d_field_ptr, src_size * sizeof(int4),
+	cudaCheckError(cudaMemcpy(h_field_ptr, d_field_ptr, src_size * sizeof(int4),
 							  cudaMemcpyDeviceToHost));
-	int *out = h_field_ptr;
-	for (int i = 0; i < src_size; ++i) {
-		out[i * 3 + 0] = tmp[i].x;
-		out[i * 3 + 1] = tmp[i].y;
-		out[i * 3 + 2] = tmp[i].z;
-	}
-	// cudaCheckError(cudaMemcpy(h_field_ptr, d_field_ptr, src_size *
-	// sizeof(int4), 						  cudaMemcpyDeviceToHost));
 
 	cudaEventRecord(t3);
 	cudaEventSynchronize(t3);

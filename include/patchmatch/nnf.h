@@ -28,7 +28,7 @@ class NearestNeighborField {
 						 const PatchDistanceMetric *metric, int max_retry = 20,
 						 bool skip_host_init = false)
 		: m_source(source), m_target(target), m_distance_metric(metric) {
-		m_field = cv::Mat(m_source.size(), CV_32SC3);
+		m_field = cv::Mat(m_source.size(), CV_32SC4);
 		if (!skip_host_init)
 			_randomize_field(max_retry);
 	}
@@ -37,7 +37,7 @@ class NearestNeighborField {
 						 const NearestNeighborField &other, int max_retry = 20,
 						 bool skip_host_init = false)
 		: m_source(source), m_target(target), m_distance_metric(metric) {
-		m_field = cv::Mat(m_source.size(), CV_32SC3);
+		m_field = cv::Mat(m_source.size(), CV_32SC4);
 		if (!skip_host_init)
 			_initialize_field_from(other, max_retry);
 	}

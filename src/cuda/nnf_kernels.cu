@@ -99,6 +99,13 @@ void CudaNNFDeviceBuffers::upload_dist2sim(const double *host_table, int n) {
 							  cudaMemcpyHostToDevice));
 }
 
+void CudaNNFDeviceBuffers::init_streams() {
+	if (!s2t_stream)
+		cudaCheckError(cudaStreamCreate(&s2t_stream));
+	if (!t2s_stream)
+		cudaCheckError(cudaStreamCreate(&t2s_stream));
+}
+
 DeviceImageBuffers::~DeviceImageBuffers() {
 	if (rgb_mask) {
 		cudaCheckError(cudaFree(rgb_mask));
@@ -120,6 +127,10 @@ CudaNNFDeviceBuffers::~CudaNNFDeviceBuffers() {
 		cudaCheckError(cudaFree(vote));
 	if (dist2sim)
 		cudaCheckError(cudaFree(dist2sim));
+	if (s2t_stream)
+		cudaCheckError(cudaStreamDestroy(s2t_stream));
+	if (t2s_stream)
+		cudaCheckError(cudaStreamDestroy(t2s_stream));
 }
 
 __device__ int compute_patch_dist(const uchar4 *src_rgb_mask,
@@ -207,14 +218,28 @@ __device__ int compute_patch_dist(const uchar4 *src_rgb_mask,
  */
 static void upload_image_buffers_to_device(DeviceImageBuffers &d_bufs,
 										   const HostImageBuffers &h_bufs,
-										   bool has_gmask) {
+										   bool has_gmask,
+										   cudaStream_t stream = nullptr) {
 	int size = h_bufs.height * h_bufs.width;
-	cudaCheckError(cudaMemcpy(d_bufs.rgb_mask, h_bufs.rgb_mask,
-							  size * sizeof(uchar4), cudaMemcpyHostToDevice));
-	cudaCheckError(cudaMemcpy(d_bufs.gx, h_bufs.gx, size * sizeof(uchar4),
-							  cudaMemcpyHostToDevice));
-	cudaCheckError(cudaMemcpy(d_bufs.gy, h_bufs.gy, size * sizeof(uchar4),
-							  cudaMemcpyHostToDevice));
+	if (!stream) {
+		cudaCheckError(cudaMemcpy(d_bufs.rgb_mask, h_bufs.rgb_mask,
+								  size * sizeof(uchar4),
+								  cudaMemcpyHostToDevice));
+		cudaCheckError(cudaMemcpy(d_bufs.gx, h_bufs.gx, size * sizeof(uchar4),
+								  cudaMemcpyHostToDevice));
+		cudaCheckError(cudaMemcpy(d_bufs.gy, h_bufs.gy, size * sizeof(uchar4),
+								  cudaMemcpyHostToDevice));
+	} else {
+		cudaCheckError(cudaMemcpyAsync(d_bufs.rgb_mask, h_bufs.rgb_mask,
+									   size * sizeof(uchar4),
+									   cudaMemcpyHostToDevice, stream));
+		cudaCheckError(cudaMemcpyAsync(d_bufs.gx, h_bufs.gx,
+									   size * sizeof(uchar4),
+									   cudaMemcpyHostToDevice, stream));
+		cudaCheckError(cudaMemcpyAsync(d_bufs.gy, h_bufs.gy,
+									   size * sizeof(uchar4),
+									   cudaMemcpyHostToDevice, stream));
+	}
 }
 
 __global__ void
@@ -488,17 +513,17 @@ extern "C" void
 launch_nnf_randomize(CudaNNFDeviceBuffers *bufs, int *d_field_ptr,
 					 const HostImageBuffers &src, const HostImageBuffers &tgt,
 					 bool has_gmask, int patch_size, int max_retry, bool reset,
-					 unsigned int seed) {
+					 unsigned int seed, cudaStream_t stream) {
 
 	int src_size = src.height * src.width;
 
-	upload_image_buffers_to_device(bufs->src_bufs, src, has_gmask);
-	upload_image_buffers_to_device(bufs->tgt_bufs, tgt, has_gmask);
+	upload_image_buffers_to_device(bufs->src_bufs, src, has_gmask, stream);
+	upload_image_buffers_to_device(bufs->tgt_bufs, tgt, has_gmask, stream);
 
 	int num_threads = 256;
 	int blocks = (src_size + num_threads - 1) / num_threads;
 
-	nnf_randomize_kernel<<<blocks, num_threads>>>(
+	nnf_randomize_kernel<<<blocks, num_threads, 0, stream>>>(
 		d_field_ptr, bufs->src_bufs.rgb_mask, bufs->src_bufs.gx,
 		bufs->src_bufs.gy, bufs->tgt_bufs.rgb_mask, bufs->tgt_bufs.gx,
 		bufs->tgt_bufs.gy, has_gmask, src.height, src.width, tgt.height,
@@ -509,25 +534,25 @@ extern "C" void launch_nnf_initialize_from(
 	CudaNNFDeviceBuffers *bufs, int *d_field_ptr, const int *other_d_field_ptr,
 	const HostImageBuffers &src, const HostImageBuffers &tgt, int other_src_h,
 	int other_src_w, bool has_gmask, int patch_size, int max_retry,
-	unsigned int seed) {
+	unsigned int seed, cudaStream_t stream) {
 
 	int src_size = src.height * src.width;
 
-	upload_image_buffers_to_device(bufs->src_bufs, src, has_gmask);
-	upload_image_buffers_to_device(bufs->tgt_bufs, tgt, has_gmask);
+	upload_image_buffers_to_device(bufs->src_bufs, src, has_gmask, stream);
+	upload_image_buffers_to_device(bufs->tgt_bufs, tgt, has_gmask, stream);
 
 	int num_threads = 256;
 	int blocks = (src_size + num_threads - 1) / num_threads;
 
 	// bilinear lookup from previous level's field.
-	nnf_initialize_from_kernel<<<blocks, num_threads>>>(
+	nnf_initialize_from_kernel<<<blocks, num_threads, 0, stream>>>(
 		d_field_ptr, other_d_field_ptr, bufs->src_bufs.rgb_mask,
 		bufs->src_bufs.gx, bufs->src_bufs.gy, bufs->tgt_bufs.rgb_mask,
 		bufs->tgt_bufs.gx, bufs->tgt_bufs.gy, has_gmask, src.height, src.width,
 		tgt.height, tgt.width, other_src_h, other_src_w, patch_size);
 
 	// randomize any entries whose distance is still >= kDistanceScale.
-	nnf_randomize_kernel<<<blocks, num_threads>>>(
+	nnf_randomize_kernel<<<blocks, num_threads, 0, stream>>>(
 		d_field_ptr, bufs->src_bufs.rgb_mask, bufs->src_bufs.gx,
 		bufs->src_bufs.gy, bufs->tgt_bufs.rgb_mask, bufs->tgt_bufs.gx,
 		bufs->tgt_bufs.gy, has_gmask, src.height, src.width, tgt.height,

@@ -61,9 +61,11 @@ Inpainting::Inpainting(cv::Mat image, cv::Mat mask,
 	: m_initial(image, mask), m_distance_metric(metric), m_pyramid(),
 	  m_source2target(), m_target2source(), m_gpu_enabled(is_gpu_enabled) {
 	_initialize_pyramid();
-	if (m_gpu_enabled)
+	if (m_gpu_enabled) {
 		m_cuda_buffers.upload_dist2sim(kDistance2Similarity.data(),
 									   PatchDistanceMetric::kDistanceScale + 1);
+		m_cuda_buffers.init_streams();
+	}
 }
 
 Inpainting::Inpainting(cv::Mat image, cv::Mat mask, cv::Mat global_mask,
@@ -72,9 +74,11 @@ Inpainting::Inpainting(cv::Mat image, cv::Mat mask, cv::Mat global_mask,
 	  m_pyramid(), m_source2target(), m_target2source(),
 	  m_gpu_enabled(is_gpu_enabled) {
 	_initialize_pyramid();
-	if (m_gpu_enabled)
+	if (m_gpu_enabled) {
 		m_cuda_buffers.upload_dist2sim(kDistance2Similarity.data(),
 									   PatchDistanceMetric::kDistanceScale + 1);
+		m_cuda_buffers.init_streams();
+	}
 }
 
 /**
@@ -132,21 +136,25 @@ void Inpainting::_initialize_fields_on_gpu(const MaskedImage &source,
 
 	if (is_coarsest_level) {
 		m_source2target.initialize_cuda_randomize(
-			&m_cuda_buffers, m_cuda_buffers.s2t_curr, 20, init_seed);
-		m_target2source.initialize_cuda_randomize(&m_cuda_buffers,
-												  m_cuda_buffers.t2s_curr, 20,
-												  init_seed ^ SEED_SALT);
+			&m_cuda_buffers, m_cuda_buffers.s2t_curr, 20, init_seed,
+			m_cuda_buffers.s2t_stream);
+		m_target2source.initialize_cuda_randomize(
+			&m_cuda_buffers, m_cuda_buffers.t2s_curr, 20, init_seed ^ SEED_SALT,
+			m_cuda_buffers.t2s_stream);
 	} else {
 		// prev buffers still hold the previous level's field.
 		// s2t's "other source" is the previous level's source.
 		// t2s's "other source" is the previous level's target.
 		m_source2target.initialize_cuda_from(
 			&m_cuda_buffers, m_cuda_buffers.s2t_curr, m_cuda_buffers.s2t_prev,
-			prev_source_size, 20, init_seed);
+			prev_source_size, 20, init_seed, m_cuda_buffers.s2t_stream);
 		m_target2source.initialize_cuda_from(
 			&m_cuda_buffers, m_cuda_buffers.t2s_curr, m_cuda_buffers.t2s_prev,
-			prev_target_size, 20, init_seed ^ SEED_SALT);
+			prev_target_size, 20, init_seed ^ SEED_SALT,
+			m_cuda_buffers.t2s_stream);
 	}
+	cudaStreamSynchronize(m_cuda_buffers.s2t_stream);
+	cudaStreamSynchronize(m_cuda_buffers.t2s_stream);
 }
 
 void Inpainting::_visualize_runs(const MaskedImage &source,

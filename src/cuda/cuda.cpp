@@ -49,7 +49,8 @@ void NearestNeighborField::minimize_cuda(int nr_pass,
 void NearestNeighborField::initialize_cuda_randomize(CudaNNFDeviceBuffers *bufs,
 													 int *d_field_ptr,
 													 int max_retry,
-													 unsigned int seed) {
+													 unsigned int seed,
+													 cudaStream_t stream) {
 	bool has_gmask =
 		!m_source.global_mask().empty() && !m_target.global_mask().empty();
 
@@ -58,15 +59,16 @@ void NearestNeighborField::initialize_cuda_randomize(CudaNNFDeviceBuffers *bufs,
 	HostImageBuffers tgt = _make_host_buffers(m_target, include_pixels);
 
 	launch_nnf_randomize(bufs, d_field_ptr, src, tgt, has_gmask,
-						 m_distance_metric->patch_size(), max_retry, true,
-						 seed);
+						 m_distance_metric->patch_size(), max_retry, true, seed,
+						 stream);
 
 	LOG("randomize kernel returned\n");
 }
 
 void NearestNeighborField::initialize_cuda_from(
 	CudaNNFDeviceBuffers *bufs, int *d_field_ptr, const int *other_d_field_ptr,
-	cv::Size other_source_size, int max_retry, unsigned int seed) {
+	cv::Size other_source_size, int max_retry, unsigned int seed,
+	cudaStream_t stream) {
 	bool has_gmask =
 		!m_source.global_mask().empty() && !m_target.global_mask().empty();
 
@@ -77,7 +79,7 @@ void NearestNeighborField::initialize_cuda_from(
 	launch_nnf_initialize_from(
 		bufs, d_field_ptr, other_d_field_ptr, src, tgt,
 		other_source_size.height, other_source_size.width, has_gmask,
-		m_distance_metric->patch_size(), max_retry, seed);
+		m_distance_metric->patch_size(), max_retry, seed, stream);
 }
 
 void NearestNeighborField::set_identity_cuda(CudaNNFDeviceBuffers *bufs,

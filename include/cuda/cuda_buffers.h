@@ -53,9 +53,14 @@ struct CudaNNFDeviceBuffers {
 	DeviceImageBuffers tgt_bufs;
 	bool gmask_allocated = false;
 
+	cudaStream_t s2t_stream = nullptr;
+    cudaStream_t t2s_stream = nullptr;
+
 	float4 *vote = nullptr;
 	int vote_capacity = 0;
 	float *dist2sim = nullptr;
+
+	void init_streams();
 
 	void allocate_device_buffers(int src_pixels, int tgt_pixels,
 								 bool need_gmask);

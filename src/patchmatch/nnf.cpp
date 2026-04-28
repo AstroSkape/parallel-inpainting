@@ -217,7 +217,7 @@ int distance_masked_images(const MaskedImage &source, int ys, int xs,
 			wsum += 1;
 
 			if (xxs <= 0 || xxs >= source_size.width - 1 || xxt <= 0 ||
-				xxt >= source_size.width - 1) {
+				xxt >= target_size.width - 1) {
 				distance += PatchSSDDistanceMetric::kSSDScale;
 				continue;
 			}

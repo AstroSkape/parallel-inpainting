@@ -134,13 +134,12 @@ CudaNNFDeviceBuffers::~CudaNNFDeviceBuffers() {
 		cudaCheckError(cudaStreamDestroy(t2s_stream));
 }
 
-__device__ int compute_patch_dist(const uchar4 *src_rgb_mask,
-								  const uchar4 *src_gx, const uchar4 *src_gy,
-								  const uchar4 *tgt_rgb_mask,
-								  const uchar4 *tgt_gx, const uchar4 *tgt_gy,
-								  bool has_gmask, int ys, int xs, int yt,
-								  int xt, int src_h, int src_w, int tgt_h,
-								  int tgt_w, int patch_size, int best_d) {
+__device__ int compute_patch_dist(
+	const uchar4 *__restrict__ src_rgb_mask, const uchar4 *__restrict__ src_gx,
+	const uchar4 *__restrict__ src_gy, const uchar4 *__restrict__ tgt_rgb_mask,
+	const uchar4 *__restrict__ tgt_gx, const uchar4 *__restrict__ tgt_gy,
+	bool has_gmask, int ys, int xs, int yt, int xt, int src_h, int src_w,
+	int tgt_h, int tgt_w, int patch_size, int best_d) {
 	float distance = 0;
 	const float wsum_total = (float)(2 * patch_size + 1) * (2 * patch_size + 1);
 	const float kSSDScale = 9 * 255 * 255;
@@ -243,13 +242,13 @@ static void upload_image_buffers_to_device(DeviceImageBuffers &d_bufs,
 	}
 }
 
-__global__ void
-nnf_jump_flood_kernel(const int4 *field_in, int4 *field_out,
-					  const uchar4 *src_rgb_mask, const uchar4 *src_gx,
-					  const uchar4 *src_gy, const uchar4 *tgt_rgb_mask,
-					  const uchar4 *tgt_gx, const uchar4 *tgt_gy,
-					  bool has_gmask, int src_h, int src_w, int tgt_h,
-					  int tgt_w, int patch_size, unsigned int seed, int jump) {
+__global__ void nnf_jump_flood_kernel(
+	const int4 *field_in, int4 *field_out,
+	const uchar4 *__restrict__ src_rgb_mask, const uchar4 *__restrict__ src_gx,
+	const uchar4 *__restrict__ src_gy, const uchar4 *__restrict__ tgt_rgb_mask,
+	const uchar4 *__restrict__ tgt_gx, const uchar4 *__restrict__ tgt_gy,
+	bool has_gmask, int src_h, int src_w, int tgt_h, int tgt_w, int patch_size,
+	unsigned int seed, int jump) {
 
 	int idx = blockIdx.x * blockDim.x + threadIdx.x;
 	if (idx >= src_h * src_w)
@@ -397,8 +396,8 @@ extern "C" void launch_nnf_minimize(
 		out[i * 3 + 1] = tmp[i].y;
 		out[i * 3 + 2] = tmp[i].z;
 	}
-	// cudaCheckError(cudaMemcpy(h_field_ptr, d_field_ptr, src_size * sizeof(int4),
-	// 						  cudaMemcpyDeviceToHost));
+	// cudaCheckError(cudaMemcpy(h_field_ptr, d_field_ptr, src_size *
+	// sizeof(int4), 						  cudaMemcpyDeviceToHost));
 
 	cudaEventRecord(t3);
 	cudaEventSynchronize(t3);
@@ -422,10 +421,12 @@ extern "C" void launch_nnf_minimize(
  * serial implementation
  */
 __global__ void nnf_randomize_kernel(
-	int4 *field, const uchar4 *src_rgb_mask, const uchar4 *src_gx,
-	const uchar4 *src_gy, const uchar4 *tgt_rgb_mask, const uchar4 *tgt_gx,
-	const uchar4 *tgt_gy, bool has_gmask, int src_h, int src_w, int tgt_h,
-	int tgt_w, int patch_size, int max_retry, bool reset, unsigned int seed) {
+	int4 *field, const uchar4 *__restrict__ src_rgb_mask,
+	const uchar4 *__restrict__ src_gx, const uchar4 *__restrict__ src_gy,
+	const uchar4 *__restrict__ tgt_rgb_mask, const uchar4 *__restrict__ tgt_gx,
+	const uchar4 *__restrict__ tgt_gy, bool has_gmask, int src_h, int src_w,
+	int tgt_h, int tgt_w, int patch_size, int max_retry, bool reset,
+	unsigned int seed) {
 
 	const int kDistanceScale = 65535;
 	int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -477,11 +478,12 @@ __global__ void nnf_randomize_kernel(
  * _initialize_field_from on the CPU
  */
 __global__ void nnf_initialize_from_kernel(
-	int4 *field, const int4 *other_field, const uchar4 *src_rgb_mask,
-	const uchar4 *src_gx, const uchar4 *src_gy, const uchar4 *tgt_rgb_mask,
-	const uchar4 *tgt_gx, const uchar4 *tgt_gy, bool has_gmask, int src_h,
-	int src_w, int tgt_h, int tgt_w, int other_src_h, int other_src_w,
-	int patch_size) {
+	int4 *field, const int4 *other_field,
+	const uchar4 *__restrict__ src_rgb_mask, const uchar4 *__restrict__ src_gx,
+	const uchar4 *__restrict__ src_gy, const uchar4 *__restrict__ tgt_rgb_mask,
+	const uchar4 *__restrict__ tgt_gx, const uchar4 *__restrict__ tgt_gy,
+	bool has_gmask, int src_h, int src_w, int tgt_h, int tgt_w, int other_src_h,
+	int other_src_w, int patch_size) {
 
 	int idx = blockIdx.x * blockDim.x + threadIdx.x;
 	if (idx >= src_h * src_w)
@@ -569,8 +571,9 @@ extern "C" void launch_nnf_initialize_from(
 		tgt.width, patch_size, max_retry, false, seed ^ 0xDEADBEEFu);
 }
 
-__device__ bool d_is_patch_masked(const uchar4 *src_rgb_mask, bool has_gmask,
-								  int y, int x, int h, int w, int patch_size) {
+__device__ bool d_is_patch_masked(const uchar4 *__restrict__ src_rgb_mask,
+								  bool has_gmask, int y, int x, int h, int w,
+								  int patch_size) {
 
 	for (int dy = -patch_size; dy <= patch_size; dy++) {
 		for (int dx = -patch_size; dx <= patch_size; dx++) {
@@ -586,7 +589,8 @@ __device__ bool d_is_patch_masked(const uchar4 *src_rgb_mask, bool has_gmask,
 	return false;
 }
 
-__global__ void nnf_set_identity_kernel(int4 *field, const uchar4 *src_rgb_mask,
+__global__ void nnf_set_identity_kernel(int4 *field,
+										const uchar4 *__restrict__ src_rgb_mask,
 										bool has_gmask, int src_h, int src_w,
 										int patch_size) {
 	int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -627,8 +631,9 @@ extern "C" void launch_nnf_set_identity(CudaNNFDeviceBuffers *bufs,
 		patch_size);
 }
 
-__global__ void expectation_step_kernel(const uchar4 *iter_img,
-										const uchar4 *peer_img, const int4 *nnf,
+__global__ void expectation_step_kernel(const uchar4 *__restrict__ iter_img,
+										const uchar4 *__restrict__ peer_img,
+										const int4 *__restrict__ nnf,
 										float4 *vote, const float *dist2sim,
 										bool source2target, bool has_gmask,
 										int iter_h, int iter_w, int peer_h,

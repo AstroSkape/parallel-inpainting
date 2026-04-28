@@ -652,25 +652,18 @@ __global__ void expectation_step_kernel(const uchar4 *iter_img,
 			if (yb < 0 || yb >= peer_h || xb < 0 || xb >= peer_w)
 				continue;
 
-			uchar4 a = iter_img[ya * iter_w + xa];
-			uchar4 b = peer_img[yb * peer_w + xb];
-
-			if (has_gmask && (a.w & 2))
-				continue;
-			if (has_gmask && (b.w & 2))
-				continue;
 
 			//   s2t (true):  read from iter (source), write to peer (target)
 			//   t2s (false): read from peer (source), write to iter (target)
 			uchar4 read_px;
 			int vote_y, vote_x, vote_w_stride;
 			if (source2target) {
-				read_px = a; // source color
+				read_px = iter_img[ya * iter_w + xa]; // source color
 				vote_y = yb;
 				vote_x = xb;
 				vote_w_stride = peer_w; // vote sized to target = peer
 			} else {
-				read_px = b; // source color
+				read_px = peer_img[yb * peer_w + xb]; // source color
 				vote_y = ya;
 				vote_x = xa;
 				vote_w_stride = iter_w; // vote sized to target = iter

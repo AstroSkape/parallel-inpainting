@@ -197,8 +197,8 @@ __device__ int compute_patch_dist(const uchar4 *src_rgb_mask,
 			ssd += (src_gradx.z - tgt_gradx.z) * (src_gradx.z - tgt_gradx.z);
 			// grad y
 			ssd += (src_grady.x - tgt_grady.x) * (src_grady.x - tgt_grady.x);
-			ssd += (tgt_grady.y - tgt_grady.y) * (src_grady.y - tgt_grady.y);
-			ssd += (tgt_grady.z - tgt_grady.z) * (src_grady.z - tgt_grady.z);
+			ssd += (src_grady.y - tgt_grady.y) * (src_grady.y - tgt_grady.y);
+			ssd += (src_grady.z - tgt_grady.z) * (src_grady.z - tgt_grady.z);
 			distance += ssd;
 		}
 

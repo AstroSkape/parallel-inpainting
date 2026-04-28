@@ -25,4 +25,11 @@ void launch_nnf_initialize_from(CudaNNFDeviceBuffers *bufs, int *d_field_ptr,
 void launch_nnf_set_identity(CudaNNFDeviceBuffers *bufs, int *d_field_ptr,
 							 const HostImageBuffers &src, bool has_gmask,
 							 int patch_size);
+
+void launch_em_iteration(CudaNNFDeviceBuffers *bufs, int src_h, int src_w,
+						 int tgt_h, int tgt_w, bool has_gmask, int patch_size,
+						 cudaStream_t stream);
 } // extern "C"
+
+void download_target_pixels(CudaNNFDeviceBuffers *bufs, uchar4 *host_dst,
+							int tgt_pixels, cudaStream_t stream);

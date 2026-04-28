@@ -3,6 +3,8 @@
 #include <opencv2/imgproc.hpp>
 
 #include "cuda/cuda_buffers.h"
+#include "cuda/cuda_helpers.cuh"
+#include "cuda/nnf_cuda.h"
 #include "patchmatch/inpaint.h"
 #include "patchmatch/masked_image.h"
 #include "utils/cycle_timer.h"
@@ -59,6 +61,9 @@ Inpainting::Inpainting(cv::Mat image, cv::Mat mask,
 	: m_initial(image, mask), m_distance_metric(metric), m_pyramid(),
 	  m_source2target(), m_target2source(), m_gpu_enabled(is_gpu_enabled) {
 	_initialize_pyramid();
+	if (m_gpu_enabled)
+		m_cuda_buffers.upload_dist2sim(kDistance2Similarity.data(),
+									   PatchDistanceMetric::kDistanceScale + 1);
 }
 
 Inpainting::Inpainting(cv::Mat image, cv::Mat mask, cv::Mat global_mask,
@@ -67,6 +72,9 @@ Inpainting::Inpainting(cv::Mat image, cv::Mat mask, cv::Mat global_mask,
 	  m_pyramid(), m_source2target(), m_target2source(),
 	  m_gpu_enabled(is_gpu_enabled) {
 	_initialize_pyramid();
+	if (m_gpu_enabled)
+		m_cuda_buffers.upload_dist2sim(kDistance2Similarity.data(),
+									   PatchDistanceMetric::kDistanceScale + 1);
 }
 
 /**
@@ -250,7 +258,7 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 	MaskedImage new_source, new_target;
 
 	int gpu_nnf_iters = std::max(1, nr_iters_nnf / 4);
-	LOG("level %d, num_iters %d\n", level,
+	LOG("level %d, em_iters %d, minimize_iters %d\n", level, nr_iters_em,
 		m_gpu_enabled ? gpu_nnf_iters : nr_iters_em);
 	for (int iter_em = 0; iter_em < nr_iters_em; ++iter_em) {
 		double t_start = CycleTimer::currentSeconds();
@@ -314,36 +322,69 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 		// E step - Votes for best patch from NNF Source->Target (completeness)
 		// and Target->Source (coherence).
 
-		// Completeness - ensures that the output image contains as much
-		// information as possible from the input as possible
-		_expectation_step(m_source2target, 1, vote, new_source, upscaled,
-						  m_gpu_enabled);
-		if (verbose)
-			std::cout << "  Expectation source to target finished."
-					  << std::endl;
+		if (m_gpu_enabled && !upscaled) {
+			int src_h = new_source.size().height;
+			int src_w = new_source.size().width;
+			int tgt_h = new_target.size().height;
+			int tgt_w = new_target.size().width;
+			bool has_gmask = !new_target.global_mask().empty();
 
-		// Coherence - ensures that the output is coherent wrt the input and
-		// that new visual structures are penalised
-		_expectation_step(m_target2source, 0, vote, new_source, upscaled,
-						  m_gpu_enabled);
-		if (verbose)
-			std::cout << "  Expectation target to source finished."
-					  << std::endl;
+			m_cuda_buffers.ensure_vote(tgt_h * tgt_w);
 
-		double t_after_estep = CycleTimer::currentSeconds();
+			launch_em_iteration(&m_cuda_buffers, src_h, src_w, tgt_h, tgt_w,
+								has_gmask, m_distance_metric->patch_size(), 0);
 
-		// M step - Compile votes (averaged) and update pixel values.
-		_maximization_step(new_target, vote, m_gpu_enabled);
-		if (verbose)
-			std::cout << "  Minimization step finished." << std::endl;
+			// Read back updated target into new_target's MaskedImage.
+			std::vector<uchar4> tgt_out(tgt_h * tgt_w);
+			download_target_pixels(&m_cuda_buffers, tgt_out.data(),
+								   tgt_h * tgt_w, /*stream=*/0);
 
-		double t_after_em = CycleTimer::currentSeconds();
-		LOG("[EM level=%d iter=%d] nnf=%.3fs upscaling=%.3fs expectation=%.3fs "
-			"maximization=%.3fs, total=%.3fs\n",
-			level, iter_em, t_after_nnf_minimize - t_start,
-			t_after_upscaling - t_after_nnf_minimize,
-			t_after_estep - t_after_upscaling, t_after_em - t_after_estep,
-			t_after_em - t_start);
+#pragma omp parallel for num_threads(thr_count)
+			for (int i = 0; i < tgt_h; ++i) {
+				for (int j = 0; j < tgt_w; ++j) {
+					uchar4 v = tgt_out[i * tgt_w + j];
+					unsigned char *px = new_target.get_mutable_image(i, j);
+					px[0] = v.x;
+					px[1] = v.y;
+					px[2] = v.z;
+					if (!(v.w & 1)) {
+						new_target.set_mask(i, j, 0);
+					}
+				}
+			}
+		} else {
+			// Completeness - ensures that the output image contains as much
+			// information as possible from the input as possible
+			_expectation_step(m_source2target, 1, vote, new_source, upscaled,
+							  m_gpu_enabled);
+			if (verbose)
+				std::cout << "  Expectation source to target finished."
+						  << std::endl;
+
+			// Coherence - ensures that the output is coherent wrt the input and
+			// that new visual structures are penalised
+			_expectation_step(m_target2source, 0, vote, new_source, upscaled,
+							  m_gpu_enabled);
+			if (verbose)
+				std::cout << "  Expectation target to source finished."
+						  << std::endl;
+
+			double t_after_estep = CycleTimer::currentSeconds();
+
+			// M step - Compile votes (averaged) and update pixel values.
+			_maximization_step(new_target, vote, m_gpu_enabled);
+			if (verbose)
+				std::cout << "  Minimization step finished." << std::endl;
+
+			double t_after_em = CycleTimer::currentSeconds();
+			LOG("[EM level=%d iter=%d] nnf=%.3fs upscaling=%.3fs "
+				"expectation=%.3fs "
+				"maximization=%.3fs, total=%.3fs\n",
+				level, iter_em, t_after_nnf_minimize - t_start,
+				t_after_upscaling - t_after_nnf_minimize,
+				t_after_estep - t_after_upscaling, t_after_em - t_after_estep,
+				t_after_em - t_start);
+		}
 	}
 
 	return new_target;

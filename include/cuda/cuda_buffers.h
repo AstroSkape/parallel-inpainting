@@ -53,11 +53,17 @@ struct CudaNNFDeviceBuffers {
 	DeviceImageBuffers tgt_bufs;
 	bool gmask_allocated = false;
 
+	float4 *vote = nullptr;
+	int vote_capacity = 0;
+	float *dist2sim = nullptr;
+
 	void allocate_device_buffers(int src_pixels, int tgt_pixels,
 								 bool need_gmask);
 
 	void ensure_s2t_fields(int pixels);
 	void ensure_t2s_fields(int pixels);
+	void ensure_vote(int tgt_pixels);
+	void upload_dist2sim(const double *host_table, int n);
 
 	void swap_s2t_fields() {
 		int *tmp = s2t_curr;

@@ -75,6 +75,28 @@ void CudaNNFDeviceBuffers::allocate_device_buffers(int src_pixels,
 	tgt_bufs.allocate_buffers(tgt_pixels, need_gmask);
 	ensure_s2t_fields(src_pixels);
 	ensure_t2s_fields(tgt_pixels);
+	ensure_vote(tgt_pixels);
+}
+
+void CudaNNFDeviceBuffers::ensure_vote(int tgt_pixels) {
+	if (tgt_pixels > vote_capacity) {
+		if (vote)
+			cudaCheckError(cudaFree(vote));
+		cudaCheckError(cudaMalloc(&vote, tgt_pixels * sizeof(float4)));
+		vote_capacity = tgt_pixels;
+	}
+	cudaMemset(vote, 0, tgt_pixels * sizeof(float4));
+}
+
+void CudaNNFDeviceBuffers::upload_dist2sim(const double *host_table, int n) {
+	// Convert host doubles to floats and upload once per run
+	std::vector<float> tmp(n);
+	for (int i = 0; i < n; ++i)
+		tmp[i] = (float)host_table[i];
+	if (!dist2sim)
+		cudaCheckError(cudaMalloc(&dist2sim, n * sizeof(float)));
+	cudaCheckError(cudaMemcpy(dist2sim, tmp.data(), n * sizeof(float),
+							  cudaMemcpyHostToDevice));
 }
 
 DeviceImageBuffers::~DeviceImageBuffers() {
@@ -94,6 +116,10 @@ CudaNNFDeviceBuffers::~CudaNNFDeviceBuffers() {
 		cudaCheckError(cudaFree(t2s_curr));
 	if (t2s_prev)
 		cudaCheckError(cudaFree(t2s_prev));
+	if (vote)
+		cudaCheckError(cudaFree(vote));
+	if (dist2sim)
+		cudaCheckError(cudaFree(dist2sim));
 }
 
 __device__ int compute_patch_dist(const uchar4 *src_rgb_mask,
@@ -110,7 +136,7 @@ __device__ int compute_patch_dist(const uchar4 *src_rgb_mask,
 
 	// use for early termination
 	const float max_distance =
-        (float)(best_d + 1) * kSSDScale * wsum_total / kDistanceScale;
+		(float)(best_d + 1) * kSSDScale * wsum_total / kDistanceScale;
 
 	for (int dy = -patch_size; dy <= patch_size; ++dy) {
 		const int yys = ys + dy, yyt = yt + dy;
@@ -263,10 +289,10 @@ nnf_jump_flood_kernel(const int *field_in, int *field_out,
 		int idxp = yp * tgt_w + xp;
 
 		if (!(has_gmask && (tgt_rgb_mask[idxp].w & 2))) {
-			int d =
-				compute_patch_dist(src_rgb_mask, src_gx, src_gy, tgt_rgb_mask,
-								   tgt_gx, tgt_gy, has_gmask, p_y, p_x, yp, xp,
-								   src_h, src_w, tgt_h, tgt_w, patch_size, best_d);
+			int d = compute_patch_dist(src_rgb_mask, src_gx, src_gy,
+									   tgt_rgb_mask, tgt_gx, tgt_gy, has_gmask,
+									   p_y, p_x, yp, xp, src_h, src_w, tgt_h,
+									   tgt_w, patch_size, best_d);
 			if (d < best_d) {
 				best_y = yp;
 				best_x = xp;
@@ -289,7 +315,6 @@ extern "C" void launch_nnf_minimize(
 	bool has_gmask, int patch_size, int nr_pass, unsigned int random_seed) {
 
 	int src_size = src.height * src.width;
-	int tgt_size = tgt.height * tgt.width;
 
 	// Timing setup
 	cudaEvent_t t0, t1, t2, t3;
@@ -396,9 +421,10 @@ __global__ void nnf_randomize_kernel(
 		if (has_gmask && (tgt_rgb_mask[y_t * tgt_w + x_t].w & 2))
 			continue;
 
-		int d = compute_patch_dist(src_rgb_mask, src_gx, src_gy, tgt_rgb_mask,
-								   tgt_gx, tgt_gy, has_gmask, p_y, p_x, y_t,
-								   x_t, src_h, src_w, tgt_h, tgt_w, patch_size, best_d);
+		int d =
+			compute_patch_dist(src_rgb_mask, src_gx, src_gy, tgt_rgb_mask,
+							   tgt_gx, tgt_gy, has_gmask, p_y, p_x, y_t, x_t,
+							   src_h, src_w, tgt_h, tgt_w, patch_size, best_d);
 
 		if (d < best_d) {
 			best_y = y_t;
@@ -465,7 +491,6 @@ launch_nnf_randomize(CudaNNFDeviceBuffers *bufs, int *d_field_ptr,
 					 unsigned int seed) {
 
 	int src_size = src.height * src.width;
-	int tgt_size = tgt.height * tgt.width;
 
 	upload_image_buffers_to_device(bufs->src_bufs, src, has_gmask);
 	upload_image_buffers_to_device(bufs->tgt_bufs, tgt, has_gmask);
@@ -487,7 +512,6 @@ extern "C" void launch_nnf_initialize_from(
 	unsigned int seed) {
 
 	int src_size = src.height * src.width;
-	int tgt_size = tgt.height * tgt.width;
 
 	upload_image_buffers_to_device(bufs->src_bufs, src, has_gmask);
 	upload_image_buffers_to_device(bufs->tgt_bufs, tgt, has_gmask);
@@ -510,8 +534,8 @@ extern "C" void launch_nnf_initialize_from(
 		tgt.width, patch_size, max_retry, false, seed ^ 0xDEADBEEFu);
 }
 
-__device__ bool d_is_patch_masked(const uchar4 *src_rgb_mask, bool has_gmask, int y,
-								  int x, int h, int w, int patch_size) {
+__device__ bool d_is_patch_masked(const uchar4 *src_rgb_mask, bool has_gmask,
+								  int y, int x, int h, int w, int patch_size) {
 
 	for (int dy = -patch_size; dy <= patch_size; dy++) {
 		for (int dx = -patch_size; dx <= patch_size; dx++) {
@@ -527,8 +551,9 @@ __device__ bool d_is_patch_masked(const uchar4 *src_rgb_mask, bool has_gmask, in
 	return false;
 }
 
-__global__ void nnf_set_identity_kernel(int *field, const uchar4 *src_rgb_mask, bool has_gmask,
-										int src_h, int src_w, int patch_size) {
+__global__ void nnf_set_identity_kernel(int *field, const uchar4 *src_rgb_mask,
+										bool has_gmask, int src_h, int src_w,
+										int patch_size) {
 	int idx = blockIdx.x * blockDim.x + threadIdx.x;
 	if (idx >= src_h * src_w)
 		return;
@@ -538,7 +563,8 @@ __global__ void nnf_set_identity_kernel(int *field, const uchar4 *src_rgb_mask, 
 	if (has_gmask && (src_rgb_mask[idx].w & 2))
 		return;
 
-	if (!d_is_patch_masked(src_rgb_mask, has_gmask, y, x, src_h, src_w, patch_size)) {
+	if (!d_is_patch_masked(src_rgb_mask, has_gmask, y, x, src_h, src_w,
+						   patch_size)) {
 		int *nnf_field = field + idx * 3;
 		nnf_field[0] = y;
 		nnf_field[1] = x;
@@ -553,7 +579,9 @@ extern "C" void launch_nnf_set_identity(CudaNNFDeviceBuffers *bufs,
 
 	int src_size = src.height * src.width;
 
-	cudaCheckError(cudaMemcpy(bufs->src_bufs.rgb_mask, src.rgb_mask, src_size * sizeof(uchar4), cudaMemcpyHostToDevice));
+	cudaCheckError(cudaMemcpy(bufs->src_bufs.rgb_mask, src.rgb_mask,
+							  src_size * sizeof(uchar4),
+							  cudaMemcpyHostToDevice));
 
 	int num_threads = 256;
 	int blocks = (src_size + num_threads - 1) / num_threads;
@@ -561,4 +589,144 @@ extern "C" void launch_nnf_set_identity(CudaNNFDeviceBuffers *bufs,
 	nnf_set_identity_kernel<<<blocks, num_threads>>>(
 		d_field_ptr, bufs->src_bufs.rgb_mask, has_gmask, src.height, src.width,
 		patch_size);
+}
+
+__global__ void expectation_step_kernel(const uchar4 *iter_img,
+										const uchar4 *peer_img, const int *nnf,
+										float4 *vote, const float *dist2sim,
+										bool source2target, bool has_gmask,
+										int iter_h, int iter_w, int peer_h,
+										int peer_w, int patch_size) {
+
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+	if (idx >= iter_h * iter_w)
+		return;
+
+	int i = idx / iter_w;
+	int j = idx % iter_w;
+
+	if (has_gmask && (iter_img[idx].w & 2))
+		return;
+
+	int yp = nnf[idx * 3 + 0];
+	int xp = nnf[idx * 3 + 1];
+	int dp = nnf[idx * 3 + 2];
+
+	if (dp < 0)
+		dp = 0;
+	// dp is bounded by kDistanceScale=65535 in the kernels
+	float w = dist2sim[dp];
+
+	for (int di = -patch_size; di <= patch_size; ++di) {
+		for (int dj = -patch_size; dj <= patch_size; ++dj) {
+			int ya = i + di, xa = j + dj;	// iter side (NNF source domain)
+			int yb = yp + di, xb = xp + dj; // peer side (NNF target domain)
+
+			if (ya < 0 || ya >= iter_h || xa < 0 || xa >= iter_w)
+				continue;
+			if (yb < 0 || yb >= peer_h || xb < 0 || xb >= peer_w)
+				continue;
+
+			uchar4 a = iter_img[ya * iter_w + xa];
+			uchar4 b = peer_img[yb * peer_w + xb];
+
+			if (has_gmask && (a.w & 2))
+				continue;
+			if (has_gmask && (b.w & 2))
+				continue;
+
+			//   s2t (true):  read from iter (source), write to peer (target)
+			//   t2s (false): read from peer (source), write to iter (target)
+			uchar4 read_px;
+			int vote_y, vote_x, vote_w_stride;
+			if (source2target) {
+				read_px = a; // source color
+				vote_y = yb;
+				vote_x = xb;
+				vote_w_stride = peer_w; // vote sized to target = peer
+			} else {
+				read_px = b; // source color
+				vote_y = ya;
+				vote_x = xa;
+				vote_w_stride = iter_w; // vote sized to target = iter
+			}
+
+			// skip if the source pixel we're voting from is masked
+			if (read_px.w & 1)
+				continue;
+			if (has_gmask && (read_px.w & 2))
+				continue;
+
+			int vidx = vote_y * vote_w_stride + vote_x;
+
+			atomicAdd(&vote[vidx].x, w * (float)read_px.x);
+			atomicAdd(&vote[vidx].y, w * (float)read_px.y);
+			atomicAdd(&vote[vidx].z, w * (float)read_px.z);
+			atomicAdd(&vote[vidx].w, w);
+		}
+	}
+}
+
+__global__ void maximization_step_kernel(const float4 *vote,
+										 uchar4 *tgt_rgb_mask, bool has_gmask,
+										 int tgt_h, int tgt_w) {
+
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+	if (idx >= tgt_h * tgt_w)
+		return;
+
+	uchar4 rm = tgt_rgb_mask[idx];
+	if (has_gmask && (rm.w & 2))
+		return; // gmask
+
+	float4 v = vote[idx];
+	if (v.w > 0) {
+		rm.x = (unsigned char)fminf(255.f, fmaxf(0.f, v.x / v.w));
+		rm.y = (unsigned char)fminf(255.f, fmaxf(0.f, v.y / v.w));
+		rm.z = (unsigned char)fminf(255.f, fmaxf(0.f, v.z / v.w));
+	} else {
+		rm.w &= ~1;
+	}
+	tgt_rgb_mask[idx] = rm;
+}
+
+extern "C" void launch_em_iteration(CudaNNFDeviceBuffers *bufs, int src_h,
+									int src_w, int tgt_h, int tgt_w,
+									bool has_gmask, int patch_size,
+									cudaStream_t stream) {
+
+	int src_pixels = src_h * src_w;
+	int tgt_pixels = tgt_h * tgt_w;
+
+	int num_threads = 256;
+
+	// Zero the vote buffer
+	cudaCheckError(
+		cudaMemsetAsync(bufs->vote, 0, tgt_pixels * sizeof(float4), stream));
+
+	// E-step source -> target (iter over source domain)
+	{
+		int blocks = (src_pixels + num_threads - 1) / num_threads;
+		expectation_step_kernel<<<blocks, num_threads, 0, stream>>>(
+			bufs->src_bufs.rgb_mask, bufs->tgt_bufs.rgb_mask, bufs->s2t_curr,
+			bufs->vote, bufs->dist2sim, true, has_gmask, src_h, src_w, tgt_h,
+			tgt_w, patch_size);
+	}
+
+	// E-step target -> source (iter over target domain)
+	{
+		int blocks = (tgt_pixels + num_threads - 1) / num_threads;
+		expectation_step_kernel<<<blocks, num_threads, 0, stream>>>(
+			bufs->tgt_bufs.rgb_mask, bufs->src_bufs.rgb_mask, bufs->t2s_curr,
+			bufs->vote, bufs->dist2sim, false, has_gmask, tgt_h, tgt_w, src_h,
+			src_w, patch_size);
+	}
+
+	// M-step
+	{
+		int blocks = (tgt_pixels + num_threads - 1) / num_threads;
+		maximization_step_kernel<<<blocks, num_threads, 0, stream>>>(
+			bufs->vote, bufs->tgt_bufs.rgb_mask, has_gmask, tgt_h, tgt_w);
+	}
+	LOG("EM GPU done\n");
 }

@@ -1,4 +1,5 @@
 #include "cuda/cuda_buffers.h"
+#include "cuda/cuda_helpers.cuh"
 #include "cuda/nnf_cuda.h"
 #include "patchmatch/inpaint.h"
 #include "patchmatch/nnf.h"
@@ -20,9 +21,10 @@ NearestNeighborField::_make_host_buffers(const MaskedImage &img,
 	const unsigned char *gy_ptr = img.grady().ptr<unsigned char>(0, 0);
 	const unsigned char *mask_ptr = img.mask().ptr<unsigned char>(0, 0);
 	const unsigned char *gmask_ptr =
-	has_gmask ? img.global_mask().ptr<unsigned char>(0, 0) : nullptr;
+		has_gmask ? img.global_mask().ptr<unsigned char>(0, 0) : nullptr;
 
-	buf.pack_pixel_data_from(img_ptr, gx_ptr, gy_ptr, mask_ptr, gmask_ptr, pixels);
+	buf.pack_pixel_data_from(img_ptr, gx_ptr, gy_ptr, mask_ptr, gmask_ptr,
+							 pixels);
 
 	return buf;
 }
@@ -87,4 +89,12 @@ void NearestNeighborField::set_identity_cuda(CudaNNFDeviceBuffers *bufs,
 
 	launch_nnf_set_identity(bufs, d_field_ptr, src, has_gmask,
 							m_distance_metric->patch_size());
+}
+
+// copies the pixel info from device back to host
+void download_target_pixels(CudaNNFDeviceBuffers *bufs, uchar4 *host_dst,
+							int tgt_pixels, cudaStream_t stream) {
+	cudaCheckError(cudaMemcpyAsync(host_dst, bufs->tgt_bufs.rgb_mask,
+								   tgt_pixels * sizeof(uchar4),
+								   cudaMemcpyDeviceToHost, stream));
 }

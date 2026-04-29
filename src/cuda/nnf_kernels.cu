@@ -242,6 +242,96 @@ static void upload_image_buffers_to_device(DeviceImageBuffers &d_bufs,
 	}
 }
 
+__global__ void nnf_minimize_kernel(
+	const int4 *field_in, int4 *field_out,
+	const uchar4 *__restrict__ src_rgb_mask, const uchar4 *__restrict__ src_gx,
+	const uchar4 *__restrict__ src_gy, const uchar4 *__restrict__ tgt_rgb_mask,
+	const uchar4 *__restrict__ tgt_gx, const uchar4 *__restrict__ tgt_gy,
+	bool has_gmask, int src_h, int src_w, int tgt_h, int tgt_w, int patch_size,
+	int color, unsigned int seed) {
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+	if (idx >= src_h * src_w)
+		return;
+
+	int p_y = idx / src_w, p_x = idx % src_w; // pixel coordinates
+
+	// even sum coords - red
+	// odd sum coords - black
+	if ((p_x + p_y) % 2 != color)
+		return;
+
+	// int *nnf_field = field + idx * 3; // 3 channels
+	// int nnf_best_y = nnf_field[0];
+	// int nnf_best_x = nnf_field[1];
+	// int nnf_best_d = nnf_field[2];
+	int4 entry = field_in[idx];
+	int nnf_best_y = entry.x, nnf_best_x = entry.y, nnf_best_d = entry.z;
+
+	const int directions[4][2] = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
+
+	// propagation phase
+	for (int i = 0; i < 4; i++) {
+		int newy = p_y + directions[i][0];
+		int newx = p_x + directions[i][1];
+		int newidx = newy * src_w + newx;
+
+		if (newy < 0 || newy >= src_h || newx < 0 || newx >= src_w)
+			continue;
+		if (has_gmask && (src_rgb_mask[newidx].w & 2))
+			continue;
+
+		int4 neighbor_field = field_in[newy * src_w + newx];
+		int candidate_y =
+			device_clamp(neighbor_field.x - directions[i][0], 0, tgt_h - 1);
+		int candidate_x =
+			device_clamp(neighbor_field.y - directions[i][1], 0, tgt_w - 1);
+
+		int computed_dist = compute_patch_dist(
+			src_rgb_mask, src_gx, src_gy, tgt_rgb_mask, tgt_gx, tgt_gy,
+			has_gmask, p_y, p_x, candidate_y, candidate_x, src_h, src_w, tgt_h,
+			tgt_w, patch_size, nnf_best_d);
+		if (computed_dist < nnf_best_d) {
+			nnf_best_x = newx;
+			nnf_best_y = newy;
+			nnf_best_d = computed_dist;
+		}
+	}
+
+	// random search phase
+	int random_scale = (min(tgt_h, tgt_w) - 1) / 2;
+	int step = 0;
+
+	while (random_scale > 0) {
+		// coprimes used to reduce collisions
+		int yp = device_clamp(nnf_best_y +
+								  rand_range(seed + idx * 1337u + step * 7919u,
+											 -random_scale, random_scale),
+							  0, tgt_h - 1);
+		int xp = device_clamp(nnf_best_x +
+								  rand_range(seed + idx * 7919u + step * 1337u,
+											 -random_scale, random_scale),
+							  0, tgt_w - 1);
+
+		if (has_gmask && (tgt_rgb_mask[yp * tgt_w + xp].w & 2)) {
+			random_scale /= 2;
+		}
+
+		int dp = compute_patch_dist(src_rgb_mask, src_gx, src_gy, tgt_rgb_mask,
+									tgt_gx, tgt_gy, has_gmask, p_y, p_x, yp, xp,
+									src_h, src_w, tgt_h, tgt_w, patch_size,
+									nnf_best_d);
+		if (dp < nnf_best_d) {
+			nnf_best_x = xp;
+			nnf_best_y = yp;
+			nnf_best_d = dp;
+		}
+		random_scale /= 2;
+		step++;
+	}
+
+	field_out[idx] = make_int4(nnf_best_y, nnf_best_x, nnf_best_d, 0);
+}
+
 __global__ void nnf_jump_flood_kernel(
 	const int4 *field_in, int4 *field_out,
 	const uchar4 *__restrict__ src_rgb_mask, const uchar4 *__restrict__ src_gx,
@@ -379,6 +469,20 @@ extern "C" void launch_nnf_minimize(
 		}
 	}
 
+	// for (int i = 0; i < nr_pass; i++) {
+	// 	unsigned int seed = random_seed + i * 12345u;
+
+	// 	nnf_minimize_kernel<<<blocks, num_threads>>>(
+	// 		d_field_ptr, d_field_ptr, bufs->src_bufs.rgb_mask, bufs->src_bufs.gx,
+	// 		bufs->src_bufs.gy, bufs->tgt_bufs.rgb_mask, bufs->tgt_bufs.gx,
+	// 		bufs->tgt_bufs.gy, has_gmask, src.height, src.width, tgt.height, tgt.width, patch_size, RED, seed);
+
+	// 	nnf_minimize_kernel<<<blocks, num_threads>>>(
+	// 		d_field_ptr, d_field_ptr, bufs->src_bufs.rgb_mask, bufs->src_bufs.gx,
+	// 		bufs->src_bufs.gy, bufs->tgt_bufs.rgb_mask, bufs->tgt_bufs.gx,
+	// 		bufs->tgt_bufs.gy, has_gmask, src.height, src.width, tgt.height, tgt.width, patch_size, BLACK, seed);
+	// }
+
 	if (in_ptr != d_field_ptr) {
 		cudaCheckError(cudaMemcpy(d_field_ptr, in_ptr, src_size * sizeof(int4),
 								  cudaMemcpyDeviceToDevice));
@@ -397,8 +501,8 @@ extern "C" void launch_nnf_minimize(
 	cudaEventElapsedTime(&h2d_ms, t0, t1);
 	cudaEventElapsedTime(&kernel_ms, t1, t2);
 	cudaEventElapsedTime(&d2h_ms, t2, t3);
-	LOG("[TIMING] h2d=%.2fms kernel=%.2fms d2h=%.2fms total=%.2fms\n", h2d_ms,
-		kernel_ms, d2h_ms, h2d_ms + kernel_ms + d2h_ms);
+	// LOG("[TIMING] h2d=%.2fms kernel=%.2fms d2h=%.2fms total=%.2fms\n", h2d_ms,
+	// 	kernel_ms, d2h_ms, h2d_ms + kernel_ms + d2h_ms);
 
 	cudaEventDestroy(t0);
 	cudaEventDestroy(t1);
@@ -754,5 +858,4 @@ extern "C" void launch_em_iteration(CudaNNFDeviceBuffers *bufs, int src_h,
 		maximization_step_kernel<<<blocks, num_threads, 0, stream>>>(
 			bufs->vote, bufs->tgt_bufs.rgb_mask, has_gmask, tgt_h, tgt_w);
 	}
-	LOG("EM GPU done\n");
 }

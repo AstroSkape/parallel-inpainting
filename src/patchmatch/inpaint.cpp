@@ -287,6 +287,8 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 		// as nearest patch (identity)
 		_set_identity_on_field(source, target, iter_em, patch_size);
 
+		double t_after_set_identity = CycleTimer::currentSeconds();
+
 		if (verbose)
 			std::cout << "  NNF minimization started." << std::endl;
 		if (m_gpu_enabled) {
@@ -385,10 +387,10 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 				std::cout << "  Minimization step finished." << std::endl;
 
 			double t_after_em = CycleTimer::currentSeconds();
-			LOG("[EM level=%d iter=%d] nnf=%.3fs upscaling=%.3fs "
+			LOG("[EM level=%d iter=%d] set_identity=%.3fs nnf=%.3fs upscaling=%.3fs "
 				"expectation=%.3fs "
 				"maximization=%.3fs, total=%.3fs\n",
-				level, iter_em, t_after_nnf_minimize - t_start,
+				level, iter_em, t_after_set_identity - t_start, t_after_nnf_minimize - t_after_set_identity,
 				t_after_upscaling - t_after_nnf_minimize,
 				t_after_estep - t_after_upscaling, t_after_em - t_after_estep,
 				t_after_em - t_start);

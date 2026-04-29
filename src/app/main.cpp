@@ -8,6 +8,96 @@ using namespace std;
 
 double startTime;
 
+void check_correctness(const std::string &serial_path,
+					   const std::string &parallel_path) {
+	cv::Mat serial = cv::imread(serial_path, cv::IMREAD_COLOR);
+	cv::Mat parallel = cv::imread(parallel_path, cv::IMREAD_COLOR);
+
+	int total_pixels = 0;
+	int differing_pixels = 0;
+	int max_diff = 0;
+	double total_diff = 0;
+	double avg_diff = 0;
+	double stddev = 0;
+	double psnr = 0;
+
+	if (serial.empty() || parallel.empty()) {
+		std::cout << "Could not load images for comparison" << std::endl;
+		return;
+	}
+
+	if (serial.size() != parallel.size()) {
+		std::cout << "Image sizes differ!" << std::endl;
+		return;
+	}
+
+	// pixel difference stats
+	total_pixels = serial.rows * serial.cols;
+	differing_pixels = 0;
+	total_diff = 0;
+	max_diff = 0;
+	std::vector<double> diffs;
+	diffs.reserve(total_pixels);
+
+	for (int i = 0; i < serial.rows; i++) {
+		for (int j = 0; j < serial.cols; j++) {
+			cv::Vec3b s = serial.at<cv::Vec3b>(i, j);
+			cv::Vec3b p = parallel.at<cv::Vec3b>(i, j);
+
+			int diff = 0;
+			for (int c = 0; c < 3; c++) {
+				diff += abs((int)s[c] - (int)p[c]);
+			}
+
+			if (diff > 0)
+				differing_pixels++;
+			total_diff += diff;
+			max_diff = std::max(max_diff, diff);
+			diffs.push_back(diff);
+		}
+	}
+
+	avg_diff = total_diff / total_pixels;
+
+	double variance = 0;
+	for (double d : diffs) {
+		variance += (d - avg_diff) * (d - avg_diff);
+	}
+	stddev = std::sqrt(variance / total_pixels);
+
+	// PSNR computation
+	cv::Mat diff_mat;
+	cv::absdiff(serial, parallel, diff_mat);
+	diff_mat.convertTo(diff_mat, CV_32F);
+	double mse = cv::mean(diff_mat.mul(diff_mat))[0];
+	psnr = (mse > 0) ? 10.0 * log10(255.0 * 255.0 / mse) : 100.0;
+
+	std::cout << "=== Correctness Check ===" << std::endl;
+	std::cout << "Total pixels:      " << total_pixels << std::endl;
+	std::cout << "Differing pixels:  " << differing_pixels << " ("
+			  << (100.0 * differing_pixels / total_pixels) << "%)" << std::endl;
+	std::cout << "Average diff:      " << avg_diff << std::endl;
+	std::cout << "Max diff:          " << max_diff << std::endl;
+	std::cout << "Stddev diff:       " << stddev << std::endl;
+	std::cout << "PSNR (serial vs parallel): " << psnr << " dB" << std::endl;
+
+	if (psnr > 35.0) {
+		std::cout << "Quality: GOOD — outputs are visually equivalent"
+				  << std::endl;
+	} else if (psnr > 25.0) {
+		std::cout << "Quality: ACCEPTABLE — minor differences" << std::endl;
+	} else {
+		std::cout
+			<< "Quality: POOR — significant differences, check implementation"
+			<< std::endl;
+	}
+}
+
+std::string get_output_file_path(bool is_gpu_enabled) {
+	std::string ctx = is_gpu_enabled ? "GPU" : "CPU";
+	return "../images/output_" + ctx + ".png";
+}
+
 cv::Mat createMask(cv::Mat imageWithHole)
 {
     // create mask
@@ -53,6 +143,7 @@ int main()
     auto serial = getExecutionTime(false, prunedImg, mask, metric);
     auto parallel = getExecutionTime(true, prunedImg, mask, metric);
     double speedup = serial / parallel;
+    check_correctness(get_output_file_path(false), get_output_file_path(true));
     
     printf("Image dimensions :\n");
     printf("Height: %d, Width: %d\n", prunedImg.size().height, prunedImg.size().width);

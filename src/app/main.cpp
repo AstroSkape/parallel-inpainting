@@ -91,6 +91,14 @@ void check_correctness(const std::string &serial_path,
 			<< "Quality: POOR — significant differences, check implementation"
 			<< std::endl;
 	}
+
+	printf("METRICS_JSON:{\"total_pixels\":%d,\"differing_pixels\":%d,"
+        "\"differing_pct\":%.4f,\"avg_diff\":%.4f,\"max_diff\":%d,"
+        "\"stddev\":%.4f,\"psnr\":%.4f}\n",
+        total_pixels, differing_pixels,
+        (total_pixels > 0) ? 100.0 * differing_pixels / total_pixels : 0.0,
+        avg_diff, max_diff, stddev, psnr);
+    fflush(stdout);
 }
 
 std::string get_output_file_path(bool is_gpu_enabled) {
@@ -118,7 +126,7 @@ cv::Mat createMask(cv::Mat imageWithHole)
     return mask;
 }
 
-double getExecutionTime(bool is_gpu_enabled, cv::Mat &imageWithHole, cv::Mat &mask, PatchDistanceMetric &metric)
+double getExecutionTime(bool is_gpu_enabled, cv::Mat &imageWithHole, std::string input_path, cv::Mat &mask, PatchDistanceMetric &metric)
 {
     startTime = CycleTimer::currentSeconds();
     auto inpainter = Inpainting(imageWithHole, mask, &metric, is_gpu_enabled);
@@ -127,29 +135,49 @@ double getExecutionTime(bool is_gpu_enabled, cv::Mat &imageWithHole, cv::Mat &ma
     double endTime = CycleTimer::currentSeconds();
 
     std::string ctx = is_gpu_enabled ? "GPU" : "CPU";
-    std::string output_file = "output_" + ctx + ".png";
-    bool success = cv::imwrite("../images/" + output_file, output);
+    std::string output_file = input_path + "_output_" + ctx + ".png";
+    bool success = cv::imwrite(output_file, output);
 
     return endTime - initEndTime;
 }
 
-int main()
+int main(int argc, char* argv[])
 {
+     if (argc < 2) {
+        std::cerr << "Usage: ./inpaint <input_path>\n";
+        return 1;
+    }
+    std::string input_path  = argv[1];
+
+    cv::Mat prunedImg = cv::imread(input_path);
     // read image
-    cv::Mat prunedImg = cv::imread("../images/forest_pruned.bmp", cv::IMREAD_COLOR);
+    // cv::Mat prunedImg = cv::imread("../images/forest_pruned.bmp", cv::IMREAD_COLOR);
     auto mask = createMask(prunedImg);
     auto metric = PatchSSDDistanceMetric(3);
 
-    auto serial = getExecutionTime(false, prunedImg, mask, metric);
-    auto parallel = getExecutionTime(true, prunedImg, mask, metric);
-    double speedup = serial / parallel;
-    check_correctness(get_output_file_path(false), get_output_file_path(true));
+    auto serial = getExecutionTime(false, prunedImg, input_path, mask, metric);
+    auto parallel = getExecutionTime(true, prunedImg, input_path, mask, metric);
+    int total_pixels = 0;
+    int differing_pixels = 0;
+    int max_diff = 0;
+    double total_diff = 0;
+    double avg_diff = 0;
+    double stddev = 0;
+    double psnr = 0;
+    check_correctness(input_path + "_output_CPU.png", input_path + "_output_GPU.png");
+	double speedup = serial / parallel;
     
+    // print JSON-parseable metrics to stdout
     printf("Image dimensions :\n");
     printf("Height: %d, Width: %d\n", prunedImg.size().height, prunedImg.size().width);
     printf("CPU Processing time: %lfs\n", serial);
     printf("GPU Processing time: %lfs\n", parallel);
     printf("Speedup observed: %lf\n", speedup);
 
+
+
+	printf("TIMING_JSON:{\"cpu_time\":%.6f,\"gpu_time\":%.6f,\"speedup\":%.6f}\n",
+		serial, parallel, speedup);
+	fflush(stdout);
     return 0;
 }

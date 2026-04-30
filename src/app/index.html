@@ -1,0 +1,1031 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PatchMatch Inpainting Demo</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap');
+
+  :root {
+    --bg:        #0a0a0f;
+    --surface:   #12121a;
+    --surface2:  #1a1a28;
+    --border:    #2a2a3f;
+    --accent:    #6c63ff;
+    --accent2:   #ff6584;
+    --green:     #43e97b;
+    --text:      #e8e8f0;
+    --muted:     #6b6b88;
+    --mono:      'Space Mono', monospace;
+    --sans:      'DM Sans', sans-serif;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── Header ── */
+  header {
+    padding: 2rem 3rem;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    background: var(--surface);
+  }
+
+  .logo {
+    width: 40px; height: 40px;
+    background: var(--accent);
+    border-radius: 10px;
+    display: grid; place-items: center;
+    font-family: var(--mono);
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #fff;
+    flex-shrink: 0;
+  }
+
+  header h1 {
+    font-family: var(--mono);
+    font-size: 1.1rem;
+    letter-spacing: 0.05em;
+    color: var(--text);
+  }
+
+  header p {
+    font-size: 0.8rem;
+    color: var(--muted);
+    margin-top: 0.2rem;
+  }
+
+  .badge {
+    margin-left: auto;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    padding: 0.3rem 0.8rem;
+    border-radius: 20px;
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    color: var(--accent);
+  }
+
+  /* ── Main layout ── */
+  main {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    min-height: calc(100vh - 89px);
+  }
+
+  /* ── Sidebar ── */
+  sidebar {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    padding: 2rem 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+  }
+
+  .section-label {
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    letter-spacing: 0.15em;
+    color: var(--muted);
+    text-transform: uppercase;
+    margin-bottom: 0.75rem;
+  }
+
+  .file-select {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    padding: 0.6rem 0.8rem;
+    font-family: var(--sans);
+    font-size: 0.85rem;
+    cursor: pointer;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236b6b88' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.8rem center;
+  }
+
+  .file-select:focus { outline: none; border-color: var(--accent); }
+
+  .upload-zone {
+    border: 2px dashed var(--border);
+    border-radius: 10px;
+    padding: 1.5rem;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    position: relative;
+  }
+
+  .upload-zone:hover, .upload-zone.drag-over {
+    border-color: var(--accent);
+    background: rgba(108, 99, 255, 0.05);
+  }
+
+  .upload-zone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+  .upload-zone .icon { font-size: 1.8rem; margin-bottom: 0.5rem; }
+  .upload-zone p { font-size: 0.8rem; color: var(--muted); }
+  .upload-zone span { color: var(--accent); font-size: 0.8rem; }
+
+  .tool-group {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  .tool-btn {
+    flex: 1;
+    padding: 0.6rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--muted);
+    font-size: 0.75rem;
+    font-family: var(--sans);
+    cursor: pointer;
+    transition: all 0.15s;
+    text-align: center;
+  }
+
+  .tool-btn:hover { border-color: var(--accent); color: var(--text); }
+  .tool-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  .slider-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .slider-row label { font-size: 0.8rem; color: var(--muted); white-space: nowrap; }
+  .slider-row input[type=range] { flex: 1; accent-color: var(--accent); }
+  .slider-row span { font-family: var(--mono); font-size: 0.75rem; color: var(--accent); width: 30px; text-align: right; }
+
+  .color-row {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .color-swatch {
+    width: 28px; height: 28px;
+    border-radius: 6px;
+    border: 2px solid transparent;
+    cursor: pointer;
+    transition: border-color 0.15s;
+  }
+
+  .color-swatch.active { border-color: #fff; }
+
+  .btn {
+    width: 100%;
+    padding: 0.75rem;
+    border-radius: 10px;
+    border: none;
+    font-family: var(--sans);
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: #fff;
+  }
+
+  .btn-primary:hover { background: #5a52e0; transform: translateY(-1px); }
+  .btn-primary:disabled { background: var(--border); color: var(--muted); cursor: not-allowed; transform: none; }
+
+  .btn-ghost {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+  }
+
+  .btn-ghost:hover { border-color: var(--accent2); color: var(--accent2); }
+
+  .btn-danger {
+    background: transparent;
+    border: 1px solid rgba(255, 101, 132, 0.3);
+    color: var(--accent2);
+  }
+
+  .btn-danger:hover { background: rgba(255, 101, 132, 0.1); }
+
+  /* ── Confirm modal ── */
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.7);
+    z-index: 100;
+    place-items: center;
+  }
+
+  .modal-overlay.show { display: grid; }
+
+  .modal {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 2rem;
+    max-width: 400px;
+    width: 90%;
+    text-align: center;
+  }
+
+  .modal h3 { font-family: var(--mono); margin-bottom: 0.75rem; }
+  .modal p { color: var(--muted); font-size: 0.875rem; margin-bottom: 1.5rem; }
+  .modal-btns { display: flex; gap: 0.75rem; }
+
+  /* ── Canvas area ── */
+  .canvas-area {
+    padding: 2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+  }
+
+  .canvas-wrap {
+    position: relative;
+    display: inline-block;
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    cursor: crosshair;
+    align-self: flex-start;
+  }
+
+  .canvas-wrap canvas {
+    display: block;
+    max-width: 100%;
+  }
+
+  #overlay-canvas {
+    position: absolute;
+    top: 0; left: 0;
+    pointer-events: none;
+  }
+
+  .canvas-placeholder {
+    width: 640px;
+    max-width: 100%;
+    height: 400px;
+    background: var(--surface2);
+    border: 2px dashed var(--border);
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    color: var(--muted);
+  }
+
+  .canvas-placeholder .big-icon { font-size: 3rem; opacity: 0.3; }
+  .canvas-placeholder p { font-size: 0.9rem; }
+
+  /* ── Status bar ── */
+  .status-bar {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.6rem 1rem;
+    background: var(--surface2);
+    border-radius: 8px;
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--muted);
+  }
+
+  .status-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--muted);
+  }
+
+  .status-dot.drawing { background: var(--accent); animation: pulse 1s infinite; }
+  .status-dot.ready   { background: var(--green); }
+  .status-dot.running { background: var(--accent2); animation: pulse 0.6s infinite; }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  /* ── Results ── */
+  .results-section {
+    border-top: 1px solid var(--border);
+    padding-top: 2rem;
+  }
+
+  .results-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1.5rem;
+  }
+
+  .results-header h2 {
+    font-family: var(--mono);
+    font-size: 1rem;
+  }
+
+  .speedup-badge {
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    padding: 0.4rem 1rem;
+    border-radius: 20px;
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: #fff;
+  }
+
+  .images-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.5rem;
+    margin-bottom: 2rem;
+  }
+
+  .result-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  .result-card-header {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .result-card-header span {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--muted);
+  }
+
+  .result-card-header .time-tag {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    padding: 0.2rem 0.6rem;
+    border-radius: 12px;
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    color: var(--accent);
+  }
+
+  .result-card img {
+    width: 100%;
+    display: block;
+  }
+
+  /* ── Metrics grid ── */
+  .metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 1rem;
+  }
+
+  .metric-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1rem;
+  }
+
+  .metric-card .metric-label {
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    color: var(--muted);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 0.5rem;
+  }
+
+  .metric-card .metric-value {
+    font-family: var(--mono);
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: var(--text);
+  }
+
+  .metric-card .metric-value.good  { color: var(--green); }
+  .metric-card .metric-value.warn  { color: #fbbf24; }
+  .metric-card .metric-value.poor  { color: var(--accent2); }
+
+  .metric-card .metric-sub {
+    font-size: 0.7rem;
+    color: var(--muted);
+    margin-top: 0.25rem;
+  }
+
+  /* ── Progress ── */
+  .progress-wrap {
+    margin-top: 1rem;
+    display: none;
+  }
+
+  .progress-wrap.show { display: block; }
+
+  .progress-label {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--muted);
+    margin-bottom: 0.5rem;
+  }
+
+  .progress-bar {
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    border-radius: 2px;
+    animation: progress-indeterminate 1.5s infinite;
+    width: 40%;
+  }
+
+  @keyframes progress-indeterminate {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(350%); }
+  }
+
+  /* ── Divider ── */
+  .divider {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 0.5rem 0;
+  }
+
+  /* ── Scrollbar ── */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">PM</div>
+  <div>
+    <h1>PatchMatch Inpainting</h1>
+    <p>CPU vs GPU parallel renderer — 15-618 Final Project</p>
+  </div>
+  <div class="badge">Barnes et al. 2009</div>
+</header>
+
+<main>
+  <!-- ── Sidebar ── -->
+  <sidebar>
+
+    <!-- Image source -->
+    <div>
+      <div class="section-label">Image Source</div>
+      <select class="file-select" id="image-select">
+        <option value="">Loading images…</option>
+      </select>
+    </div>
+
+    <div>
+      <div class="section-label">Or Upload</div>
+      <div class="upload-zone" id="upload-zone">
+        <input type="file" id="file-input" accept="image/*">
+        <div class="icon">📁</div>
+        <p>Drop image here</p>
+        <span>or click to browse</span>
+      </div>
+    </div>
+
+    <hr class="divider">
+
+    <!-- Drawing tools -->
+    <div>
+      <div class="section-label">Mask Tool</div>
+      <div class="tool-group">
+        <button class="tool-btn active" id="tool-lasso" onclick="setTool('lasso')">✏️ Lasso</button>
+        <button class="tool-btn" id="tool-brush" onclick="setTool('brush')">🖌️ Brush</button>
+        <button class="tool-btn" id="tool-rect" onclick="setTool('rect')">⬜ Rect</button>
+      </div>
+    </div>
+
+    <div class="slider-row">
+      <label>Brush size</label>
+      <input type="range" id="brush-size" min="5" max="80" value="20">
+      <span id="brush-size-val">20</span>
+    </div>
+
+    <hr class="divider">
+
+    <button class="btn btn-ghost" onclick="clearMask()">🗑 Clear Mask</button>
+    <button class="btn btn-primary" id="confirm-btn" onclick="showConfirm()" disabled>
+      ✓ Confirm &amp; Inpaint
+    </button>
+    <button class="btn btn-danger" onclick="resetAll()">↺ Start Over</button>
+
+    <!-- Progress -->
+    <div class="progress-wrap" id="progress">
+      <div class="progress-label" id="progress-label">Running CPU inpaint…</div>
+      <div class="progress-bar"><div class="progress-fill"></div></div>
+    </div>
+
+  </sidebar>
+
+  <!-- ── Canvas + Results ── -->
+  <div class="canvas-area">
+
+    <div>
+      <div class="status-bar">
+        <div class="status-dot" id="status-dot"></div>
+        <span id="status-text">Select an image to begin</span>
+      </div>
+
+      <div style="margin-top:1rem;" id="canvas-container">
+        <div class="canvas-placeholder">
+          <div class="big-icon">🖼️</div>
+          <p>Your image will appear here</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Results (hidden until run) -->
+    <div class="results-section" id="results" style="display:none;">
+
+      <div class="results-header">
+        <h2>Results</h2>
+        <div class="speedup-badge" id="speedup-badge">—</div>
+      </div>
+
+      <div class="images-grid" id="images-grid">
+        <div class="result-card" id="card-original">
+          <div class="result-card-header">
+            <span>ORIGINAL + MASK</span>
+          </div>
+          <img id="img-original" src="" alt="original">
+        </div>
+        <div class="result-card" id="card-cpu">
+          <div class="result-card-header">
+            <span>CPU OUTPUT</span>
+            <div class="time-tag" id="cpu-time-tag">—</div>
+          </div>
+          <img id="img-cpu" src="" alt="cpu output">
+        </div>
+        <div class="result-card" id="card-gpu">
+          <div class="result-card-header">
+            <span>GPU OUTPUT</span>
+            <div class="time-tag" id="gpu-time-tag">—</div>
+          </div>
+          <img id="img-gpu" src="" alt="gpu output">
+        </div>
+      </div>
+
+      <!-- Metrics -->
+      <div class="section-label">Quality Metrics (CPU vs GPU)</div>
+      <div class="metrics-grid" id="metrics-grid">
+        <!-- populated by JS -->
+      </div>
+
+    </div>
+  </div>
+</main>
+
+<!-- Confirm modal -->
+<div class="modal-overlay" id="modal">
+  <div class="modal">
+    <h3>Ready to Inpaint?</h3>
+    <p>The white masked region will be removed and reconstructed using PatchMatch. This runs both CPU and GPU versions for comparison.</p>
+    <div class="modal-btns">
+      <button class="btn btn-ghost" style="flex:1" onclick="hideConfirm()">Cancel</button>
+      <button class="btn btn-primary" style="flex:1" onclick="runInpaint()">Run Inpaint</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────────
+let imgCanvas, maskCanvas, overlayCanvas;
+let imgCtx, maskCtx, overlayCtx;
+let drawing = false;
+let currentTool = 'lasso';
+let brushSize = 20;
+let maskColor = '#ffffff';
+let lassoPoints = [];
+let rectStart = null;
+let hasMask = false;
+let currentImagePath = null;   // path relative to IMAGES_DIR
+let currentImageData = null;   // base64 for uploads
+
+// ── Init ───────────────────────────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', () => {
+  loadImageList();
+
+  document.getElementById('brush-size').addEventListener('input', e => {
+    brushSize = +e.target.value;
+    document.getElementById('brush-size-val').textContent = brushSize;
+  });
+
+  document.getElementById('image-select').addEventListener('change', e => {
+    if (e.target.value) loadImageFromServer(e.target.value);
+  });
+
+  document.getElementById('file-input').addEventListener('change', e => {
+    if (e.target.files[0]) loadImageFromFile(e.target.files[0]);
+  });
+});
+
+// ── Image loading ──────────────────────────────────────────────────────────────
+async function loadImageList() {
+  try {
+    const r = await fetch('/images');
+    const files = await r.json();
+    const sel = document.getElementById('image-select');
+    sel.innerHTML = '<option value="">— choose an image —</option>';
+    files.forEach(f => {
+      const opt = document.createElement('option');
+      opt.value = f; opt.textContent = f;
+      sel.appendChild(opt);
+    });
+  } catch(e) {
+    console.error('Could not load image list', e);
+  }
+}
+
+function loadImageFromServer(filename) {
+  currentImagePath = filename;
+  currentImageData = null;
+  const img = new Image();
+  img.onload = () => setupCanvas(img);
+  img.src = `/image/${filename}`;
+}
+
+function loadImageFromFile(file) {
+  currentImagePath = null;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const img = new Image();
+    img.onload = () => {
+      setupCanvas(img);
+      currentImageData = e.target.result;
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+function setupCanvas(img) {
+  const container = document.getElementById('canvas-container');
+  container.innerHTML = `
+    <div class="canvas-wrap" id="canvas-wrap">
+      <canvas id="img-canvas"></canvas>
+      <canvas id="mask-canvas" style="position:absolute;top:0;left:0;opacity:0.55;"></canvas>
+      <canvas id="overlay-canvas" style="position:absolute;top:0;left:0;pointer-events:none;"></canvas>
+    </div>`;
+
+  imgCanvas     = document.getElementById('img-canvas');
+  maskCanvas    = document.getElementById('mask-canvas');
+  overlayCanvas = document.getElementById('overlay-canvas');
+  imgCtx        = imgCanvas.getContext('2d');
+  maskCtx       = maskCanvas.getContext('2d');
+  overlayCtx    = overlayCanvas.getContext('2d');
+
+  const maxW = container.clientWidth - 4;
+  const scale = Math.min(1, maxW / img.naturalWidth);
+  const W = Math.round(img.naturalWidth * scale);
+  const H = Math.round(img.naturalHeight * scale);
+
+  [imgCanvas, maskCanvas, overlayCanvas].forEach(c => {
+    c.width = W; c.height = H;
+  });
+
+  imgCtx.drawImage(img, 0, 0, W, H);
+
+  // Attach drawing events to mask canvas
+  maskCanvas.addEventListener('mousedown', onMouseDown);
+  maskCanvas.addEventListener('mousemove', onMouseMove);
+  maskCanvas.addEventListener('mouseup',   onMouseUp);
+  maskCanvas.addEventListener('mouseleave', onMouseUp);
+
+  hasMask = false;
+  updateStatus('idle', 'Draw a mask over the area to remove');
+  document.getElementById('confirm-btn').disabled = true;
+}
+
+// ── Drawing ────────────────────────────────────────────────────────────────────
+function setTool(t) {
+  currentTool = t;
+  ['lasso','brush','rect'].forEach(id => {
+    document.getElementById(`tool-${id}`).classList.toggle('active', id === t);
+  });
+}
+
+function setColor(el) {
+  document.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('active'));
+  el.classList.add('active');
+  maskColor = el.dataset.color;
+}
+
+function getPos(e) {
+  const r = maskCanvas.getBoundingClientRect();
+  const scaleX = maskCanvas.width  / r.width;
+  const scaleY = maskCanvas.height / r.height;
+  return {
+    x: (e.clientX - r.left) * scaleX,
+    y: (e.clientY - r.top)  * scaleY,
+  };
+}
+
+function onMouseDown(e) {
+  drawing = true;
+  const pos = getPos(e);
+
+  if (currentTool === 'lasso') {
+    lassoPoints = [pos];
+    overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+  } else if (currentTool === 'brush') {
+    paintBrush(pos);
+  } else if (currentTool === 'rect') {
+    rectStart = pos;
+  }
+
+  updateStatus('drawing', 'Drawing mask…');
+}
+
+function onMouseMove(e) {
+  if (!drawing) return;
+  const pos = getPos(e);
+
+  if (currentTool === 'lasso') {
+    lassoPoints.push(pos);
+    drawLassoPreview();
+  } else if (currentTool === 'brush') {
+    paintBrush(pos);
+    markMask();
+  } else if (currentTool === 'rect') {
+    drawRectPreview(pos);
+  }
+}
+
+function onMouseUp(e) {
+  if (!drawing) return;
+  drawing = false;
+  const pos = e.type === 'mouseleave' ? null : getPos(e);
+
+  if (currentTool === 'lasso' && lassoPoints.length > 2) {
+    fillLasso();
+  } else if (currentTool === 'rect' && rectStart && pos) {
+    fillRect(rectStart, pos);
+    rectStart = null;
+  }
+
+  overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+}
+
+function paintBrush(pos) {
+  maskCtx.beginPath();
+  maskCtx.arc(pos.x, pos.y, brushSize / 2, 0, Math.PI * 2);
+  maskCtx.fillStyle = maskColor;
+  maskCtx.fill();
+}
+
+function drawLassoPreview() {
+  overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+  overlayCtx.beginPath();
+  overlayCtx.moveTo(lassoPoints[0].x, lassoPoints[0].y);
+  lassoPoints.forEach(p => overlayCtx.lineTo(p.x, p.y));
+  overlayCtx.strokeStyle = maskColor;
+  overlayCtx.lineWidth = 2;
+  overlayCtx.setLineDash([5, 3]);
+  overlayCtx.stroke();
+  overlayCtx.setLineDash([]);
+}
+
+function fillLasso() {
+  maskCtx.beginPath();
+  maskCtx.moveTo(lassoPoints[0].x, lassoPoints[0].y);
+  lassoPoints.forEach(p => maskCtx.lineTo(p.x, p.y));
+  maskCtx.closePath();
+  maskCtx.fillStyle = maskColor;
+  maskCtx.fill();
+  lassoPoints = [];
+  markMask();
+}
+
+function drawRectPreview(pos) {
+  overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+  overlayCtx.beginPath();
+  overlayCtx.rect(rectStart.x, rectStart.y, pos.x - rectStart.x, pos.y - rectStart.y);
+  overlayCtx.strokeStyle = maskColor;
+  overlayCtx.lineWidth = 2;
+  overlayCtx.setLineDash([5, 3]);
+  overlayCtx.stroke();
+  overlayCtx.setLineDash([]);
+}
+
+function fillRect(a, b) {
+  maskCtx.fillStyle = maskColor;
+  maskCtx.fillRect(a.x, a.y, b.x - a.x, b.y - a.y);
+  markMask();
+}
+
+function markMask() {
+  hasMask = true;
+  document.getElementById('confirm-btn').disabled = false;
+  updateStatus('ready', 'Mask drawn — confirm when ready');
+}
+
+function clearMask() {
+  if (!maskCtx) return;
+  maskCtx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
+  overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+  hasMask = false;
+  document.getElementById('confirm-btn').disabled = true;
+  updateStatus('idle', 'Mask cleared — draw again');
+}
+
+// ── Modal ──────────────────────────────────────────────────────────────────────
+function showConfirm() {
+  if (!hasMask) return;
+  document.getElementById('modal').classList.add('show');
+}
+
+function hideConfirm() {
+  document.getElementById('modal').classList.remove('show');
+}
+
+// ── Inpaint ────────────────────────────────────────────────────────────────────
+async function runInpaint() {
+  hideConfirm();
+  updateStatus('running', 'Running inpaint (CPU + GPU)…');
+  setProgress(true, 'Compositing image and mask…');
+  document.getElementById('confirm-btn').disabled = true;
+
+  // Composite: draw image then mask (white) onto a single canvas
+  const comp = document.createElement('canvas');
+  comp.width  = imgCanvas.width;
+  comp.height = imgCanvas.height;
+  const ctx = comp.getContext('2d');
+  ctx.drawImage(imgCanvas, 0, 0);
+
+  // Apply mask as white pixels
+  const maskData = maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
+  const imgData  = ctx.getImageData(0, 0, comp.width, comp.height);
+  for (let i = 0; i < maskData.data.length; i += 4) {
+    if (maskData.data[i+3] > 10) {          // masked pixel
+      imgData.data[i]   = 255;
+      imgData.data[i+1] = 255;
+      imgData.data[i+2] = 255;
+      imgData.data[i+3] = 255;
+    }
+  }
+  ctx.putImageData(imgData, 0, 0);
+
+  const compositeB64 = comp.toDataURL('image/png');
+
+  setProgress(true, 'Running CPU & GPU inpainting…');
+
+  try {
+    const body = { image_data: compositeB64 };
+
+    const r = await fetch('/inpaint', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    const data = await r.json();
+    if (data.error) throw new Error(data.error);
+
+    setProgress(false);
+    showResults(data);
+    updateStatus('ready', 'Inpainting complete!');
+  } catch(err) {
+    setProgress(false);
+    updateStatus('idle', `Error: ${err.message}`);
+    document.getElementById('confirm-btn').disabled = false;
+    alert(`Inpainting failed:\n${err.message}`);
+  }
+}
+
+function showResults(data) {
+  document.getElementById('results').style.display = 'block';
+
+  // Speedup badge
+  const sb = document.getElementById('speedup-badge');
+  if (data.speedup) {
+    sb.textContent = `${data.speedup}× GPU speedup`;
+  } else {
+    sb.textContent = 'GPU unavailable';
+    sb.style.background = '#6b6b88';
+  }
+
+  // Images
+  document.getElementById('img-original').src = `data:image/bmp;base64,${data.original}`;
+  document.getElementById('img-cpu').src = `data:image/png;base64,${data.cpu_result}`;
+  document.getElementById('cpu-time-tag').textContent = `${data.cpu_time}s`;
+
+  if (data.gpu_result) {
+    document.getElementById('img-gpu').src = `data:image/png;base64,${data.gpu_result}`;
+    document.getElementById('gpu-time-tag').textContent = `${data.gpu_time}s`;
+    document.getElementById('card-gpu').style.display = '';
+  } else {
+    document.getElementById('card-gpu').style.display = 'none';
+  }
+
+  // Metrics
+  const m = data.metrics;
+  const grid = document.getElementById('metrics-grid');
+  if (m && Object.keys(m).length) {
+    const qualityClass = m.quality === 'GOOD' ? 'good' : m.quality === 'ACCEPTABLE' ? 'warn' : 'poor';
+    grid.innerHTML = `
+      <div class="metric-card">
+        <div class="metric-label">PSNR</div>
+        <div class="metric-value ${qualityClass}">${m.psnr} <small style="font-size:0.6em">dB</small></div>
+        <div class="metric-sub">${m.quality}</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Differing Pixels</div>
+        <div class="metric-value">${m.differing_pct}<small style="font-size:0.6em">%</small></div>
+        <div class="metric-sub">${m.differing_pixels.toLocaleString()} / ${m.total_pixels.toLocaleString()}</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Avg Pixel Diff</div>
+        <div class="metric-value">${m.avg_diff}</div>
+        <div class="metric-sub">per pixel (0–765)</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Max Pixel Diff</div>
+        <div class="metric-value">${m.max_diff}</div>
+        <div class="metric-sub">worst single pixel</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Std Dev</div>
+        <div class="metric-value">${m.stddev}</div>
+        <div class="metric-sub">error spread</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">GPU Speedup</div>
+        <div class="metric-value good">${data.speedup ?? '—'}×</div>
+        <div class="metric-sub">${data.cpu_time}s → ${data.gpu_time}s</div>
+      </div>
+    `;
+  } else {
+    grid.innerHTML = '<p style="color:var(--muted);font-size:0.85rem;">GPU metrics unavailable</p>';
+  }
+
+  document.getElementById('results').scrollIntoView({ behavior: 'smooth' });
+}
+
+// ── UI helpers ─────────────────────────────────────────────────────────────────
+function updateStatus(state, text) {
+  const dot  = document.getElementById('status-dot');
+  const span = document.getElementById('status-text');
+  dot.className = `status-dot ${state === 'idle' ? '' : state === 'drawing' ? 'drawing' : state === 'ready' ? 'ready' : 'running'}`;
+  span.textContent = text;
+}
+
+function setProgress(show, label = '') {
+  const wrap = document.getElementById('progress');
+  wrap.classList.toggle('show', show);
+  if (label) document.getElementById('progress-label').textContent = label;
+}
+
+function resetAll() {
+  document.getElementById('canvas-container').innerHTML = `
+    <div class="canvas-placeholder">
+      <div class="big-icon">🖼️</div>
+      <p>Your image will appear here</p>
+    </div>`;
+  document.getElementById('results').style.display = 'none';
+  document.getElementById('image-select').value = '';
+  currentImagePath = null;
+  currentImageData = null;
+  hasMask = false;
+  imgCanvas = maskCanvas = overlayCanvas = null;
+  document.getElementById('confirm-btn').disabled = true;
+  updateStatus('idle', 'Select an image to begin');
+  setProgress(false);
+}
+</script>
+</body>
+</html>

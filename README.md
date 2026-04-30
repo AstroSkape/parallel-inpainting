@@ -36,6 +36,22 @@ Finally delete all files created
 Add this to ~/.bashrc to persist it.
 ```export LD_LIBRARY_PATH=$HOME/local/lib:$LD_LIBRARY_PATH```
 
+## Running the webpage
+
+Run from src/ directory
+
+```
+python3 -m venv venv
+source venv/bin/activate
+pip install flask pillow numpy
+IMAGES_DIR=../images INPAINT_BIN=../build/inpaint python app/server.py
+```
+Server runs on 127.0.0.1/5000
+
+To enable port forwarding use:
+
+```ssh -L 5000:localhost:5000 <andrewid>@ghcX.ghc.andrew.cmu.edu```
+
 
 ## References
 

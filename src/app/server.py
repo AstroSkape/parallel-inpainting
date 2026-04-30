@@ -90,10 +90,11 @@ def index():
 
 @app.route("/images")
 def list_images():
-    """List available images in the images directory."""
     exts = {".bmp", ".png", ".jpg", ".jpeg"}
     files = []
-    for f in sorted(os.listdir(IMAGES_DIR)):
+    abs_dir = os.path.abspath(IMAGES_DIR)
+    print("Serving images from:", abs_dir)
+    for f in sorted(os.listdir(abs_dir)):
         if os.path.splitext(f)[1].lower() in exts:
             files.append(f)
     return jsonify(files)
@@ -101,7 +102,10 @@ def list_images():
 
 @app.route("/image/<filename>")
 def serve_image(filename):
-    return send_from_directory(IMAGES_DIR, filename)
+    abs_dir = os.path.abspath(IMAGES_DIR)
+    full_path = os.path.join(abs_dir, filename)
+    print("Serving:", full_path, "exists:", os.path.exists(full_path))
+    return send_from_directory(abs_dir, filename)
 
 
 @app.route("/inpaint", methods=["POST"])

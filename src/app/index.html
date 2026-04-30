@@ -536,16 +536,6 @@
       <span id="brush-size-val">20</span>
     </div>
 
-    <div>
-      <div class="section-label">Mask Color</div>
-      <div class="color-row">
-        <div class="color-swatch active" style="background:#ffffff" data-color="#ffffff" onclick="setColor(this)"></div>
-        <div class="color-swatch" style="background:#ff6584" data-color="#ff6584" onclick="setColor(this)"></div>
-        <div class="color-swatch" style="background:#6c63ff" data-color="#6c63ff" onclick="setColor(this)"></div>
-        <div class="color-swatch" style="background:#43e97b" data-color="#43e97b" onclick="setColor(this)"></div>
-      </div>
-    </div>
-
     <hr class="divider">
 
     <button class="btn btn-ghost" onclick="clearMask()">🗑 Clear Mask</button>
@@ -915,9 +905,7 @@ async function runInpaint() {
   setProgress(true, 'Running CPU & GPU inpainting…');
 
   try {
-    const body = currentImagePath
-      ? { image_path: currentImagePath }
-      : { image_data: compositeB64 };
+    const body = { image_data: compositeB64 };
 
     const r = await fetch('/inpaint', {
       method: 'POST',

@@ -61,8 +61,6 @@ void NearestNeighborField::initialize_cuda_randomize(CudaNNFDeviceBuffers *bufs,
 	launch_nnf_randomize(bufs, d_field_ptr, src, tgt, has_gmask,
 						 m_distance_metric->patch_size(), max_retry, true, seed,
 						 stream);
-
-	LOG("randomize kernel returned\n");
 }
 
 void NearestNeighborField::initialize_cuda_from(

@@ -60,8 +60,9 @@ def mat_to_b64(path: str) -> str:
 
 def run_inpaint(image_path: str) -> tuple:
     image_path = os.path.abspath(image_path)
-    cpu_out = f"{image_path}_output_CPU.png"
-    gpu_out = f"{image_path}_output_GPU.png"
+    cpu_out = f"{IMAGES_DIR}/output_CPU.png"
+    gpu_out = f"{IMAGES_DIR}/output_GPU.png"
+    print(cpu_out, gpu_out)
 
     cmd = [os.path.abspath(INPAINT_BIN), image_path]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)

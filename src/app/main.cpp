@@ -1,5 +1,6 @@
 #include <cstddef>
 #include <iostream>
+#include <filesystem>
 
 #include "patchmatch/inpaint.h"
 #include "utils/cycle_timer.h"
@@ -8,8 +9,15 @@ using namespace std;
 
 double startTime;
 
-void check_correctness(const std::string &serial_path,
-					   const std::string &parallel_path) {
+std::string get_output_file_path(bool is_gpu_enabled) {
+	std::string ctx = is_gpu_enabled ? "GPU" : "CPU";
+	return "../images/output_" + ctx + ".png";
+}
+
+void check_correctness() {
+	const std::string &serial_path = get_output_file_path(false);
+	const std::string &parallel_path = get_output_file_path(true);
+
 	cv::Mat serial = cv::imread(serial_path, cv::IMREAD_COLOR);
 	cv::Mat parallel = cv::imread(parallel_path, cv::IMREAD_COLOR);
 
@@ -101,11 +109,6 @@ void check_correctness(const std::string &serial_path,
     fflush(stdout);
 }
 
-std::string get_output_file_path(bool is_gpu_enabled) {
-	std::string ctx = is_gpu_enabled ? "GPU" : "CPU";
-	return "../images/output_" + ctx + ".png";
-}
-
 cv::Mat createMask(cv::Mat imageWithHole)
 {
     // create mask
@@ -128,15 +131,18 @@ cv::Mat createMask(cv::Mat imageWithHole)
 
 double getExecutionTime(bool is_gpu_enabled, cv::Mat &imageWithHole, std::string input_path, cv::Mat &mask, PatchDistanceMetric &metric)
 {
-    startTime = CycleTimer::currentSeconds();
     auto inpainter = Inpainting(imageWithHole, mask, &metric, is_gpu_enabled);
     double initEndTime = CycleTimer::currentSeconds();
     auto output = inpainter.run(false, false);
     double endTime = CycleTimer::currentSeconds();
 
     std::string ctx = is_gpu_enabled ? "GPU" : "CPU";
-    std::string output_file = input_path + "_output_" + ctx + ".png";
+    std::string output_file = std::filesystem::path(PROJECT_ROOT) / "images"  / ("output_" + ctx + ".png");
     bool success = cv::imwrite(output_file, output);
+	if (!success) {
+		printf("Failed to save the image %s\n", output_file.c_str());
+		exit(1);
+	}
 
     return endTime - initEndTime;
 }
@@ -144,27 +150,19 @@ double getExecutionTime(bool is_gpu_enabled, cv::Mat &imageWithHole, std::string
 int main(int argc, char* argv[])
 {
      if (argc < 2) {
-        std::cerr << "Usage: ./inpaint <input_path>\n";
+        std::cerr << "Usage: ./inpaint <image_name>\n";
         return 1;
     }
-    std::string input_path  = argv[1];
+    std::string img_name  = argv[1];
+	std::string input_path = std::filesystem::path(PROJECT_ROOT) / "images" / img_name;
 
     cv::Mat prunedImg = cv::imread(input_path);
-    // read image
-    // cv::Mat prunedImg = cv::imread("../images/forest_pruned.bmp", cv::IMREAD_COLOR);
     auto mask = createMask(prunedImg);
     auto metric = PatchSSDDistanceMetric(3);
 
     auto serial = getExecutionTime(false, prunedImg, input_path, mask, metric);
     auto parallel = getExecutionTime(true, prunedImg, input_path, mask, metric);
-    int total_pixels = 0;
-    int differing_pixels = 0;
-    int max_diff = 0;
-    double total_diff = 0;
-    double avg_diff = 0;
-    double stddev = 0;
-    double psnr = 0;
-    check_correctness(input_path + "_output_CPU.png", input_path + "_output_GPU.png");
+    check_correctness();
 	double speedup = serial / parallel;
     
     // print JSON-parseable metrics to stdout

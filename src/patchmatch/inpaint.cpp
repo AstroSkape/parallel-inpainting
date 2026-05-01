@@ -201,6 +201,7 @@ void Inpainting::_set_identity_on_field(const MaskedImage &source,
 
 cv::Mat Inpainting::run(bool verbose, bool verbose_visualize,
 						unsigned int random_seed) {
+    startTime = CycleTimer::currentSeconds();
 	srand(random_seed);
 	const int nr_levels = m_pyramid.size();
 	thr_count = m_gpu_enabled ? omp_get_max_threads() : 1;
@@ -262,6 +263,7 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 	// coarser levels require lesser iterations to converge
 	const int nr_iters_nnf = static_cast<int>(std::min(7, 1 + level));
 	const int patch_size = m_distance_metric->patch_size();
+	double t_after_em;
 
 	MaskedImage new_source, new_target;
 
@@ -362,6 +364,7 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 					}
 				}
 			}
+			t_after_em = CycleTimer::currentSeconds();
 		} else {
 			// Completeness - ensures that the output image contains as much
 			// information as possible from the input as possible
@@ -379,22 +382,20 @@ MaskedImage Inpainting::_expectation_maximization(MaskedImage source,
 				std::cout << "  Expectation target to source finished."
 						  << std::endl;
 
-			double t_after_estep = CycleTimer::currentSeconds();
 
 			// M step - Compile votes (averaged) and update pixel values.
 			_maximization_step(new_target, vote, m_gpu_enabled);
 			if (verbose)
 				std::cout << "  Minimization step finished." << std::endl;
 
-			double t_after_em = CycleTimer::currentSeconds();
-			LOG("[EM level=%d iter=%d] set_identity=%.3fs nnf=%.3fs upscaling=%.3fs "
-				"expectation=%.3fs "
-				"maximization=%.3fs, total=%.3fs\n",
+			t_after_em = CycleTimer::currentSeconds();
+		}
+		LOG("[EM level=%d iter=%d] set_identity=%.6fs nnf=%.6fs upscaling=%.6fs "
+				"em=%.6fs, total=%.6fs\n",
 				level, iter_em, t_after_set_identity - t_start, t_after_nnf_minimize - t_after_set_identity,
 				t_after_upscaling - t_after_nnf_minimize,
-				t_after_estep - t_after_upscaling, t_after_em - t_after_estep,
+				t_after_em - t_after_upscaling,
 				t_after_em - t_start);
-		}
 	}
 
 	return new_target;

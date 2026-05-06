@@ -101,9 +101,10 @@
     color: #f5f3ec;
   }
   .links-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 0.75rem;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 1rem;
   }
   .link-card {
     display: block;
@@ -267,13 +268,17 @@
   <section>
     <h2>Links</h2>
     <div class="links-grid">
-      <a class="link-card" href="https://docs.google.com/document/d/1SHlWeMfte05F6BTFgUYZfZQIznU-Wa7wOZKUN57yIpk/edit?usp=sharing" target="_blank" rel="noopener">
+      <a class="link-card" href="docs/project_proposal.pdf" target="_blank" rel="noopener">
         <p class="kind">Document</p>
         <p class="label">Project Proposal<span class="arrow">&rarr;</span></p>
       </a>
-      <a class="link-card" href="https://docs.google.com/document/d/1sF0vJjaKoKieEuUNr5cJDAL9kHcjwsS27u--XhSB6dg/edit?usp=sharing" target="_blank" rel="noopener">
+      <a class="link-card" href="docs/milestone_report.pdf" target="_blank" rel="noopener">
         <p class="kind">Document</p>
         <p class="label">Milestone Report<span class="arrow">&rarr;</span></p>
+      </a>
+      <a class="link-card" href="docs/final_report.pdf" target="_blank" rel="noopener">
+        <p class="kind">Repository</p>
+        <p class="label">Final Report<span class="arrow">&rarr;</span></p>
       </a>
       <a class="link-card" href="https://github.com/AstroSkape/parallel-inpainting" target="_blank" rel="noopener">
         <p class="kind">Repository</p>
